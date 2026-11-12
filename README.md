@@ -7,15 +7,16 @@ Continuación del [PSet 2](https://github.com/junilai/Pset_2), commit
 clasificación de alta demanda cantonal exclusivamente a **t+3**. El alcance
 del PSet 3 se limita a ese horizonte por decisión del equipo.
 
-**Estado:** el login y la extracción de Snowflake ya se comprobaron y existen
-corridas previas. Esta versión del código se ha adaptado a t+3 **sin ejecutarla**.
-Los notebooks tienen sus salidas anteriores limpiadas. El PDF y
-`docs/corridas.csv` conservan el historial de la ejecución anterior y todavía
-no se han regenerado para el alcance nuevo.
+**Estado:** se reinició la experimentación. Se eliminaron las corridas y los
+modelos de MLflow junto con sus volúmenes, los modelos y estados locales y las
+salidas de los notebooks. `docs/corridas.csv` conserva únicamente su cabecera.
+Se conservan la OBT descargada y `snapshot.json`, las credenciales y el código.
+El memo PDF debe elaborarse después de completar las nuevas corridas.
 
 La búsqueda prevista es **3 familias × 30 configuraciones = 90 configuraciones
-de tuning**, únicamente para t+3. Las corridas compatibles de t+3 ya terminadas
-pueden reutilizarse al reanudar; las de otros horizontes se excluyen del flujo.
+de tuning**, únicamente para t+3. La próxima ejecución entrenará desde cero.
+Después de iniciar Docker Desktop, ejecutar `docker compose up -d` para crear
+un MLflow vacío y ejecutar los notebooks 01 a 05 en orden con Restart y Run All.
 
 ## Estructura del enunciado
 
@@ -42,13 +43,14 @@ pset_3/
 ```
 
 `src/datos.py` contiene acceso a datos, EDA, métricas, experimentación,
-tracking y generación del documento. `src/pipeline.py` contiene features,
+tracking y visualizaciones para los notebooks. `src/pipeline.py` contiene features,
 `Pipeline` y `ColumnTransformer`. Los notebooks importan estas funciones.
 Los snapshots, estados, figuras y modelos intermedios se guardan fuera del
 repositorio, en `~/.cache/pset_3/`, configurable mediante `PSET3_DATA_DIR`. Los nuevos
 intermedios de presentación se guardan en `~/.cache/pset_3/evidencia_t3/`.
-Las figuras y tablas se incorporan al PDF; los artefactos MLflow persisten
-además en volúmenes Docker. No se generan archivos adicionales de entrega.
+Las figuras y tablas se muestran en los notebooks y sirven de evidencia para
+redactar el documento técnico por separado. Los artefactos MLflow persisten
+en volúmenes Docker. No se generan archivos adicionales de entrega.
 
 ## Instalación y MLflow
 
@@ -198,11 +200,11 @@ y AP respecto de MLflow.
 ```bash
 python -m playwright install chromium
 python -m src.datos captura
-python -m src.datos report
 ```
 
-La captura real queda en la caché y se incorpora al PDF. El documento sigue
-los ocho apartados del enunciado en su orden: EDA; Features; Preparación y
+La captura real queda en la caché para incluirla en el documento técnico,
+que se redacta por separado. **No hay código que genere el PDF.** El documento
+debe seguir los ocho apartados del enunciado en su orden: EDA; Features; Preparación y
 validación; Diseño experimental; Resultados; Tuning; Decisión; Limitaciones.
 Máximo seis páginas sin anexos. `docs/corridas.csv` se exporta mediante
 `mlflow.search_runs`.
@@ -217,6 +219,14 @@ reasignaciones retrospectivas y el P90 congelado puede perder vigencia.
 No se afirma reducir tiempos de respuesta ni costos monetarios.
 
 Falta completar el tuning de t+3, la evaluación final y el registro de los
-finalistas, y volver a guardar las salidas de los notebooks y regenerar PDF/CSV.
+finalistas, volver a guardar las salidas de los notebooks, actualizar el CSV
+y redactar la versión final del documento técnico.
 Las credenciales, el snapshot y las corridas históricas se conservan. Nada se
 reanuda automáticamente por editar estos archivos.
+
+El notebook 04 ejecuta el tuning bajo `joblib.parallel_config(backend="threading", n_jobs=4)`.
+Random Forest conserva `n_jobs=None` y hereda cuatro hilos para ajustar y predecir
+con sus árboles. Esta configuración de ejecución no modifica la semilla, las
+configuraciones, los folds ni las huellas del código de entrenamiento; las
+corridas completas se reutilizan. El contexto se aplica al ejecutar de nuevo
+la celda del tuning; una celda ya en ejecución conserva su configuración anterior.

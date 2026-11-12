@@ -1,4 +1,4 @@
-"""Datos, EDA, experimentación, tracking y documento técnico del PSet 3.
+"""Datos, EDA, experimentación, tracking y visualizaciones del PSet 3.
 
 La preparación de features y estimadores se importa de src/pipeline.py.
 Ejecutar fases con python -m src.datos <fase>.
@@ -329,7 +329,7 @@ def git_info():
 
 def experiment_hash():
     """Cambios de presentación no invalidan experimentos científicos ya terminados."""
-    ignored={'build_report','read_json','execute_notebooks','capture_mlflow','execute','main'}
+    ignored={'read_json','plot_candidates','plot_tuning','plot_selection','execute_notebooks','capture_mlflow','execute','main'}
     h=hashlib.sha256()
     for path in sorted((ROOT/'src').glob('*.py')):
         tree=ast.parse(path.read_text())
@@ -898,280 +898,58 @@ def llm_trial(c):
     dump(cached,{'key':cache_key,'results':outputs}); dump(EVIDENCE /'llm_status.json',outputs); export_runs(c)
     return outputs
 
-# REPORTE
-import json
-from pathlib import Path
-from html import escape
-import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_LEFT
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image
-
-NAME='PSet3_memo_Tierra_Rodriguez_Rodriguez_Cadena_Jarrin.pdf'
+# VISUALIZACIONES PARA LOS NOTEBOOKS
 
 def read_json(path, default=None):
+    """Lee metadatos locales; no genera documentos."""
     return json.loads(path.read_text()) if path.exists() else default
 
-def build_report():
-    """Ocho apartados del enunciado en seis páginas; solo evidencia efectivamente observada."""
-    DOCS.mkdir(parents=True,exist_ok=True); EVIDENCE.mkdir(parents=True,exist_ok=True)
-    snapshot=read_json(DATA/'snapshot.json',{})
-    finding=read_json(EVIDENCE/'eda/findings.json',{})
-    default=[r for r in read_json(DATA/'candidatos.json',{}).get('results',[]) if r.get('horizon')==3]
-    tuned=[r for r in read_json(DATA/'tuning.json',{}).get('results',[]) if r.get('horizon')==3]
-    selected=[r for r in read_json(DATA/'seleccion.json',{}).get('results',[]) if r.get('horizon')==3]
-    ablated=[r for r in read_json(DATA/'ablacion.json',{}).get('results',[]) if r.get('horizon')==3]
-    llm=read_json(EVIDENCE/'llm_status.json',{})
-    split=read_json(DATA/'split.json',{})
-    verified=read_json(EVIDENCE/'verificacion_registry.json',[])
-    runs=pd.read_csv(DOCS/'corridas.csv') if (DOCS/'corridas.csv').exists() else pd.DataFrame()
-    if 'tags.horizonte' in runs:
-        runs=runs[pd.to_numeric(runs['tags.horizonte'],errors='coerce').eq(3)]
-    else:
-        runs=runs.iloc[0:0]
-    finished=runs[runs.status.eq('FINISHED')] if 'status' in runs else runs
-    counts=finished.get('tags.fase',pd.Series(dtype=str)).value_counts().to_dict()
-    real=bool(snapshot) and not snapshot.get('synthetic',True)
-    complete=(real and len(selected)==2 and len(tuned)==3 and isinstance(llm,list) and len(llm)==1
-              and len(verified)==2 and counts.get('baseline',0)>=2 and counts.get('candidato',0)>=5
-              and counts.get('tuning',0)>=90 and counts.get('final',0)>=2)
-    styles=getSampleStyleSheet()
-    body=ParagraphStyle('body',fontName='Helvetica',fontSize=8.4,leading=10.6,spaceAfter=6)
-    small=ParagraphStyle('small',fontName='Helvetica',fontSize=6.9,leading=8.1,spaceAfter=4)
-    heading=ParagraphStyle('heading',fontName='Helvetica-Bold',fontSize=13,leading=16,spaceAfter=7,spaceBefore=5)
-    story=[]; md=[]
-    def p(value,tiny=False):
-        story.append(Paragraph(value,small if tiny else body)); md.append(value)
-    def title(value):
-        story.append(Paragraph(value,heading)); md.append('\n# '+value)
-    def table(headers,rows,widths):
-        data=[[Paragraph(escape(str(v)),small) for v in row] for row in [headers]+rows]
-        tab=Table(data,colWidths=widths,repeatRows=1,hAlign='LEFT')
-        tab.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#dcecf1')),
-            ('VALIGN',(0,0),(-1,-1),'TOP'),('TOPPADDING',(0,0),(-1,-1),3),
-            ('BOTTOMPADDING',(0,0),(-1,-1),3),('LINEBELOW',(0,0),(-1,0),.5,colors.HexColor('#167d9a'))]))
-        story.extend([tab,Spacer(1,6)])
-        md.append(' | '.join(headers)); md.extend(' | '.join(map(str,r)) for r in rows)
-    def picture(path,height=150):
-        if path.exists():
-            from PIL import Image as PI
-            with PI.open(path) as im:w,h=im.size
-            scale=min(490/w,height/h)
-            story.append(Image(str(path),width=w*scale,height=h*scale))
-    def page():story.append(PageBreak())
-    def f(value,n=3):return 'NA' if value is None else f'{value:.{n}f}'
-    def pct(value):return 'indefinida' if value is None else f'{value:.1%}'
-    names={'dummy':'Dummy','estacional':'Estacional','logistica':'Logística',
-           'random_forest':'Random forest','hist_boosting':'Hist boosting','mlp':'MLP','gaussian_nb':'GaussianNB'}
-    title('PSet 3 · Experimentación y selección del modelo')
-    p('Tierra · Rodríguez · Rodríguez · Cadena · Jarrín · ECU 911',True)
-    p('<b>'+('RESULTADOS REALES VERIFICADOS' if complete else 'RESULTADOS PARCIALES: ejecución t+3 pendiente de completar')+'</b>',True)
-    p('Objetivo del PSet 1: anticipar alta demanda cantonal a t+3 para revisión humana; '
-      'reducir al menos 10% los días de alta demanda no anticipados frente a la regla estacional. '
-      'Se conserva y=1 cuando el conteo objetivo supera estrictamente P90 del cantón y weekday.')
-    if snapshot:
-        p(f'Fuente: {snapshot["source_table"]}. Snapshot {snapshot["date_min"]} a {snapshot["date_max"]}; '
-          f'{snapshot["rows"]:,} filas × {snapshot["columns"]} columnas, {snapshot["cantones"]} unidades. '
-          'La OBT actual amplía el histórico del PSet 2 hasta septiembre de 2026.',True)
-        p('SHA256: '+snapshot['sha256'],True)
-    title('1. EDA')
-    p('La EDA que guía decisiones usa train; el hold-out permanece reservado. Se revisaron '
-      'esquema/nulos, descriptivos, prevalencia, IQR y |Z|>=3. Se usa Spearman por asimetría '
-      'y asociaciones monótonas; no se eliminan picos automáticamente porque son el fenómeno objetivo.')
-    if finding:
-        table(['Hallazgo y evidencia en train','Consecuencia experimental'],[
-            [r['hallazgo']+': '+r['evidencia'],r['consecuencia']] for r in finding['findings']], [285,205])
-        picture(EVIDENCE/'eda/distribucion_boxplot.png',140)
-        p(f'Train: {finding["train_rows"]:,} filas. El año inicial de calibración tiene '
-          f'{finding["calibration_rows"]:,} filas y se reserva para P90. Esquema, descriptivos, '
-          'nulos y outliers por columna se muestran completos en el notebook 01.',True)
-    else:p('EDA pendiente: no se inventan hallazgos.')
-    page()
-    title('2. Features')
-    table(['Derivada / codificación','Justificación y disponibilidad'],[
-        ['tendencia_7_28=(media7+1)/(media28+1)','Escalas cantonales muy distintas en EDA; cambio relativo de nivel. Ambas medias usan pasado anterior a t.'],
-        ['cambio_semanal=(n_t-lag7)/(lag7+1)','Contraste con la semana previa; n_t conocido al cierre t bajo feed diario.'],
-        ['estacional_relativa=(media4_weekday+1)/(media28+1)','EDA muestra patrón semanal. Para t+3 usa exclusivamente t-4,-11,-18,-25.'],
-        ['sin/cos del weekday y mes objetivo','Calendario conocido de antemano; representa ciclos sin saltos artificiales.'],
-        ['Cantón/provincia/región/weekday','One-hot ajustado al train de cada fold; categorías nuevas ignoradas.']],[240,250])
-    p('Prueba de disponibilidad: las derivaciones no usan desplazamientos negativos ni obj_*. '
-      'Se excluyen columnas fuera de la allowlist y la marca retrospectiva de anomalía. '
-      'La disponibilidad diaria es un supuesto de evaluación retrospectiva: el portal público publica por mes.')
-    if ablated:
-        table(['Horizonte','AP sin ratios','AP con ratios','Delta / > SD'],[
-            [f't+{r["horizon"]}',f(r['without_ap']),f(r['with_ap']),f'{f(r["delta"])} / {r["exceeds_std"]}'] for r in ablated], [90,120,120,160])
-        p('Ablación con logística, mismos folds: retirar conjuntamente los tres ratios. Una mejora '
-          'menor a la variación entre pliegues no demuestra aporte; no se oculta un resultado negativo.',True)
-    title('3. Preparación y validación')
-    p(f'Calibración P90: primer año, hasta {split.get("calibration_end","pendiente")}; es parte del '
-      'bloque de entrenamiento, separado del ajuste de clasificadores. P90 se congela antes de los folds '
-      f'para mantener la misma etiqueta. Hold-out: 20% final de fechas, desde {split.get("test_start","pendiente")}; '
-      'se retiran siete días previos al corte y los objetivos finales no observados.')
-    p('Tres folds expansivos con TimeSeriesSplit sobre fechas únicas y gap de siete días. Todos los '
-      'cantones del día permanecen juntos; max(fecha_train)+7 &lt; min(fecha_validación). Mediana, '
-      'StandardScaler y one-hot se ajustan exclusivamente con train en Pipeline/ColumnTransformer de src/pipeline.py.')
-    p('Métrica técnica común: Average Precision (AP, PR-AUC no interpolada). Métrica de negocio: '
-      '(FN_estacional - FN_modelo)/FN_estacional; indefinida si FN_estacional=0. El umbral se fija '
-      f'en OOF minimizando {COST_FN:g}FN+{COST_FP:g}FP con precision>={MIN_PRECISION:.2f}; son supuestos '
-      'relativos de sensibilidad, no dólares ni costos validados con ECU 911.')
-    picture(EVIDENCE/'eda/correlacion.png',145)
-    page()
-    title('4. Diseño experimental')
-    p('Primero se entrenaron las dos bases para t+3: Dummy de clase más frecuente y '
-      'regla del PSet 1 (promedio de cuatro weekdays previos > P90). Su score media/P90 sirve '
-      'para ordenar, no es probabilidad calibrada. Cinco familias con defaults salvo semilla: '
-      'logística, random forest, hist gradient boosting, MLP y GaussianNB. Igual preparación, fechas y AP.')
-    table(['Fase','Plan t+3','Corridas terminadas'],[
-        ['Baselines','2',counts.get('baseline',0)],['Candidatos','5',counts.get('candidato',0)],
-        ['Tuning','90 hijas + 3 padres',str(counts.get('tuning',0))+' + '+str(counts.get('tuning_padre',0))],
-        ['Final','2 finalistas',counts.get('final',0)],['Ablación / LLM','1 / 1',str(counts.get('ablacion',0))+' / '+str(counts.get('llm',0))]], [110,230,150])
-    p('MLflow en Docker: backend SQLite y artifact store en volúmenes persistentes, servidos por proxy. '
-      'Cada configuración guarda hiperparámetros/semilla, tabla/corte/hash, train AP, CV media y SD, '
-      'tiempos, folds, advertencias, fase/familia y commit/hash de código. Se registra el pipeline '
-      'completo con firma y ejemplo. Tuning usa corridas hijas; docs/corridas.csv se exporta con mlflow.search_runs.')
-    if isinstance(llm,list) and llm:
-        table(['Prueba zero-shot Qwen 2.5 1.5B local','AP','Precision / recall'],[
-            [f't+{r["horizon"]}: n={r["rows"]}; run {r["run_id"]}',f(r['metrics']['ap']),
-             f'{f(r["metrics"]["precision"])} / {f(r["metrics"]["recall"])}'] for r in llm],[300,70,120])
-        p('Ollama sin API key: JSON con probability, temperatura 0, prompt y respuestas guardados. '
-          'Muestra aleatoria del último fold, sin etiquetas en el prompt y sin test. Se comparó contra '
-          'OOF de las mismas filas. Umbral exploratorio .70 del memo; la muestra no participa en el '
-          'ranking de CV completa ni prueba calibración.',True)
-        r=next(r for r in llm if r['horizon']==3)
-        comparison=[[names[a['name']],f(a['ap'])] for a in r['comparison_same_rows']]
-        comparison.append(['Qwen 2.5 1.5B',f(r['metrics']['ap'])])
-        table(['AP en las MISMAS 100 filas de validación t+3','AP'],comparison,[390,100])
-        p('El experimento con LLM es exploratorio y se limita a t+3; la tabla muestra '
-          'el resultado observado sin extrapolarlo a otros horizontes.',True)
-    else:p('Evaluación LLM pendiente. Ollama local qwen2.5:1.5b está configurado; no se atribuyen resultados sin ejecutar.')
-    picture(EVIDENCE/'mlflow_comparacion.png',230)
-    if not (EVIDENCE/'mlflow_comparacion.png').exists():p('Captura real de comparación MLflow pendiente.',True)
-    page()
-    title('5. Resultados')
-    if default:
-        table(['h / modelo','Train AP','CV AP ± SD','Brecha','LR','Ajuste s'],[
-            [f'{r["horizon"]} / {names[r["name"]]}',f(r['train_ap']),
-             f'{f(r["cv_ap_mean"])} ± {f(r["cv_ap_std"])}',f(r['gap']),r['learning_rate'],f(r['fit_seconds'],1)]
-             for r in default],[110,65,110,60,60,85])
-        fig,ax=plt.subplots(figsize=(8,2.9))
-        for h,offset in [(3,0)]:
-            rows=[r for r in default if r['horizon']==h]
-            ax.errorbar(np.arange(len(rows))+offset,[r['cv_ap_mean'] for r in rows],
-                yerr=[r['cv_ap_std'] for r in rows],fmt='o',capsize=3,label=f't+{h}')
-        ax.set_xticks(range(len(rows)),[names[r['name']] for r in rows],rotation=15,ha='right',fontsize=8)
-        ax.set(ylabel='AP de CV ± SD');ax.legend();fig.tight_layout()
-        fig.savefig(EVIDENCE/'comparacion_modelos.png',dpi=150);plt.close(fig)
-        picture(EVIDENCE/'comparacion_modelos.png',160)
-        failure=[f't+{r["horizon"]} {names[r["name"]]}' for r in default if r.get('beats_both_baselines') is False]
-        p('No superan ambas bases por AP de CV: '+(', '.join(failure) if failure else 'ninguno')+'.')
-        largest=max([r for r in default if r['phase']=='candidato'],key=lambda r:r['gap'])
-        p(f'Mayor brecha observada: t+{largest["horizon"]} {names[largest["name"]]}, '
-          f'train {f(largest["train_ap"])} frente a CV {f(largest["cv_ap_mean"])} '
-          f'(brecha {f(largest["gap"])}), compatible con sobreajuste. La validación temporal '
-          'y la dispersión entre folds determinan selección, no el ajuste aparente de train.')
-        p('Ajuste s suma entrenamiento en folds y refit final; se registra también tiempo transcurrido '
-          'con scoring. LR=NA si no aplica. Advertencias de convergencia se conservan en los artefactos; '
-          'un default que no converge sigue siendo evidencia del experimento por defecto.',True)
-    else:p('Fase de candidatos aún no completada.')
-    page()
-    title('6. Tuning')
-    p('Se seleccionan los tres mejores defaults de t+3 por AP media de CV. Búsqueda '
-      'aleatoria reproducible (ParameterSampler, semilla 42), 30 configuraciones por familia y los '
-      'mismos folds. Permite explorar órdenes de magnitud con presupuesto fijo y registrar cada '
-      'configuración como nested run con su modelo completo.')
-    search={
-        'logistica':'C log 1e-4..1e3; class_weight None/balanced; max_iter 500/1000.',
-        'random_forest':'80..400 árboles; profundidad None/6/12/20; min hoja 1..30; max_features sqrt/.3/.7; ponderación None/balanced.',
-        'hist_boosting':'LR log .01.. .3; 80..300 iter.; 7..63 hojas; L2 log 1e-4..10; min hoja 10..60.',
-        'mlp':'(32),(64),(100),(64,32); alpha log 1e-6.. .1; LR log 1e-4..1e-2; 200/400 iter.; early stopping sí/no.',
-        'gaussian_nb':'var_smoothing log 1e-12..1e-3.'}
-    active=sorted({r['name'] for r in tuned})
-    if active:table(['Familia ajustada','Espacio evaluado'],[[names[n],search[n]] for n in active],[120,370])
-    p('LR y regularización usan escala logarítmica; complejidad y número de iteraciones tienen '
-      'rangos acotados para controlar costo. Si delta AP no supera la mayor SD de default y '
-      'ajustado, no se presenta como mejora demostrada y se conserva default para la selección.')
-    if tuned:
-        table(['h / familia','Configuraciones','AP default','AP ajustada ± SD','Delta / >SD'],[
-            [f'{r["horizon"]} / {names[r["name"]]}','30',f(r['cv_ap_mean']-r['improvement']),
-             f'{f(r["cv_ap_mean"])} ± {f(r["cv_ap_std"])}',f'{f(r["improvement"])} / {r["improvement_exceeds_std"]}'] for r in tuned],[115,70,85,120,100])
-    trials_path=EVIDENCE/'tuning_trials.csv'
-    if trials_path.exists():
-        trials=pd.read_csv(trials_path)
-        fig,ax=plt.subplots(figsize=(8,2.8))
-        for (h,n),g in trials.groupby(['horizon','name']):
-            ax.plot(range(1,len(g)+1),g.cv_ap_mean.cummax(),label=f't+{h} {names[n]}')
-        ax.set(xlabel='Configuraciones',ylabel='Mejor AP acumulada');ax.legend(fontsize=6,ncol=2)
-        fig.tight_layout();fig.savefig(EVIDENCE/'tuning.png',dpi=150);plt.close(fig)
-        picture(EVIDENCE/'tuning.png',180)
-    if not tuned:p('Tuning aún no completado; no se declaran mejoras sin medir.')
-    p('Se compara ganador y segundo de familias distintas. Diferencia mayor a la SD es una '
-      'regla descriptiva, no prueba formal de significancia. El uso de los mismos folds para tuning '
-      'y selección puede ser optimista; test permanece independiente.',True)
-    page()
-    title('7. Decisión')
-    if selected:
-        table(['h / alias','Familia','AP CV ± SD','AP test','Recall','Red. FN'],[
-            [f'{r["horizon"]}/{r["alias"]}',names[r['name']],f'{f(r["cv_ap_mean"])} ± {f(r["cv_ap_std"])}',
-             f(r['ap']),f(r['recall']),pct(r['fn_reduction'])] for r in selected],[90,85,105,65,60,85])
-        for h in HORIZONS:
-            winner=next(r for r in selected if r['horizon']==h and r['alias']=='champion')
-            runner=next(r for r in selected if r['horizon']==h and r['alias']=='challenger')
-            p(f't+{h}: {names[winner["name"]]} se eligió por AP media de CV; diferencia '
-              f'{f(winner["cv_difference"])} frente a SD máxima {f(max(winner["cv_ap_std"],runner["cv_ap_std"]))}. '
-              f'¿Supera variación entre folds? {winner["cv_difference_exceeds_sd"]}. '
-              f'Reducción FN={pct(winner["fn_reduction"])}; '
-              +('cumple meta del 10%.' if winner['fn_reduction'] is not None and winner['fn_reduction']>=.1 else 'no demuestra cumplir la meta del 10%.'))
-        table(['h / alias','Run final / versión Registry','Umbral / precisión / costo* / ms-fila'],[
-            [f'{r["horizon"]}/{r["alias"]}',f'{r["run_id"]} / v{r["version"]}',
-             f'{f(r["threshold"])} / {f(r["precision"])} / {f(r["cost_per_1000"],1)} / {f(r["inference_ms_per_row"],4)}'] for r in selected],[90,240,160])
-        p('*Costo relativo por 1.000 cantón-días; supuestos 5FN+FP. Finalistas y umbrales '
-          'se congelaron en CV/OOF antes de abrir test. Test no modifica ranking, hiperparámetros '
-          'ni umbral. Se mide inferencia en el mismo entorno; no son costos monetarios.',True)
-        for r in selected:
-            if r['alias']=='champion':
-                p(f't+{r["horizon"]}, importancia por permutación en train: '+', '.join(r.get('important_features_train',[])[:3])+'. '
-                  'Es descriptiva y no causal; logística añade coeficientes, modelos complejos requieren inspección.',True)
-        p('Registry: ecu911-alta-demanda-t3-modelo, aliases '
-          'champion/challenger. Notebook 05 carga por alias en kernel nuevo y exige predicciones '
-          'idénticas y AP igual al run final. '+f'Reproducciones exactas verificadas: {len(verified)}/2.',True)
-    else:p('Selección y evaluación final aún pendientes.')
-    if selected:
-        fig,ax=plt.subplots(figsize=(6,2.1))
-        group=[r for r in selected if r['horizon']==3]
-        baseline=group[0]['business_baseline']['fn']
-        ax.bar(['Estacional','Champion','Challenger'],[baseline]+[r['fn'] for r in group],color=['#6b8294','#167d9a','#ad7a43'])
-        ax.set(title='t+3',ylabel='Días altos no anticipados')
-        ax.tick_params(axis='x',labelsize=7)
-        fig.tight_layout();fig.savefig(EVIDENCE/'decision_fn.png',dpi=150);plt.close(fig)
-        picture(EVIDENCE/'decision_fn.png',110)
-    title('8. Limitaciones')
-    p('La fuente pública mensual no satisface la disponibilidad diaria asumida; esta es evaluación '
-      'retrospectiva condicionada a datos oportunos. Enero 2024 se conserva con anomalía sin causa '
-      'confirmada; no se usa su marca como predictor. P90 congelado puede perder vigencia y la '
-      'prevalencia cambia. Geografía del PSet 2 contiene correcciones retrospectivas. Sin población '
-      'INEC, capacidad operativa ni ID de incidente no se concluye saturación, exactitud factual '
-      'o reducción de tiempos de respuesta. Costos y precisión mínima son supuestos; requieren '
-      'validación institucional. Tuning/selección comparten folds; Qwen se evalúa en una muestra '
-      'pequeña y temperatura cero no garantiza estabilidad entre versiones.')
-    p('Fuentes: CD_PSet_3.pdf; memo PSet 1; github.com/junilai/Pset_2 '
-      '(cc4df2dc56d9f17691956ba9c325245726eeba9b); documentación oficial de sklearn y MLflow.',True)
-    def footer(canvas,doc):
-        canvas.setStrokeColor(colors.HexColor('#167d9a'));canvas.line(42,805,553,805)
-        canvas.setFont('Helvetica',7);canvas.drawString(42,815,'ECU 911 · PSet 3 · Experimentación con evidencia')
-        canvas.drawRightString(553,24,str(doc.page))
-    SimpleDocTemplate(str(DOCS/NAME),pagesize=A4,rightMargin=42,leftMargin=42,topMargin=48,bottomMargin=40).build(story,onFirstPage=footer,onLaterPages=footer)
-    (EVIDENCE/'memo.md').write_text('\n\n'.join(md))
-    state={'real_snapshot':real,'real_results':len(selected)==2,'baseline_runs':sum(r['phase']=='baseline' for r in default),'candidate_runs':sum(r['phase']=='candidato' for r in default),
-           'tuned_families':len(tuned),'final_runs':len(selected),'registry_verified':len(verified)==2,
-           'mlflow_screenshot':(EVIDENCE/'mlflow_comparacion.png').exists(),'llm_executed':isinstance(llm,list),
-           'ready_to_submit':complete and (EVIDENCE/'mlflow_comparacion.png').exists(),'memo':NAME}
-    dump(EVIDENCE/'estado_entrega.json',state)
-    return state
+def plot_candidates(rows):
+    """Comparación de AP de CV de los modelos t+3; devuelve una imagen para el notebook."""
+    rows=[r for r in rows if r.get('horizon')==3]
+    if not rows:
+        raise ValueError('Faltan resultados de candidatos t+3.')
+    EVIDENCE.mkdir(parents=True,exist_ok=True)
+    fig,ax=plt.subplots(figsize=(9,3.5))
+    ax.errorbar(range(len(rows)),[r['cv_ap_mean'] for r in rows],
+                yerr=[r['cv_ap_std'] for r in rows],fmt='o',capsize=4)
+    ax.set_xticks(range(len(rows)),[r['name'] for r in rows],rotation=20,ha='right')
+    ax.set(ylabel='AP de CV ± desviación',title='Comparación de modelos — t+3')
+    fig.tight_layout()
+    path=EVIDENCE/'comparacion_modelos.png'
+    fig.savefig(path,dpi=160);plt.close(fig)
+    return path
+
+def plot_tuning(trials):
+    """Curva de mejor AP por configuración completada, exclusivamente para t+3."""
+    trials=trials[pd.to_numeric(trials['horizon'],errors='coerce').eq(3)]
+    if trials.empty:
+        raise ValueError('Faltan configuraciones de tuning t+3.')
+    EVIDENCE.mkdir(parents=True,exist_ok=True)
+    fig,ax=plt.subplots(figsize=(9,3.5))
+    for name,group in trials.groupby('name'):
+        ax.plot(range(1,len(group)+1),group.cv_ap_mean.cummax(),label=name)
+    ax.set(xlabel='Configuraciones completadas',ylabel='Mejor AP de CV acumulada',title='Tuning — t+3')
+    ax.legend();fig.tight_layout()
+    path=EVIDENCE/'tuning.png'
+    fig.savefig(path,dpi=160);plt.close(fig)
+    return path
+
+def plot_selection(rows):
+    """Falsos negativos del baseline y de ambos finalistas, sin reevaluar el hold-out."""
+    rows=[r for r in rows if r.get('horizon')==3]
+    if len(rows)!=2:
+        raise ValueError('Se necesitan los dos finalistas de t+3.')
+    EVIDENCE.mkdir(parents=True,exist_ok=True)
+    fig,ax=plt.subplots(figsize=(7,3.5))
+    ax.bar(['Estacional']+[r['alias'] for r in rows],
+           [rows[0]['business_baseline']['fn']]+[r['fn'] for r in rows],
+           color=['#6b8294','#167d9a','#ad7a43'])
+    ax.set(ylabel='Días altos no anticipados',title='Falsos negativos en prueba — t+3')
+    fig.tight_layout()
+    path=EVIDENCE/'decision_fn.png'
+    fig.savefig(path,dpi=160);plt.close(fig)
+    return path
 
 
 # RUN
@@ -1234,8 +1012,6 @@ def execute(stage):
         return capture_mlflow()
     if stage=='snapshot':
         return snapshot_from_snowflake()
-    if stage=='report':
-        return build_report()
     c=context()
     if stage=='eda':
         result=run_eda(c['cal'],c['train'],c['p90'])
@@ -1275,15 +1051,15 @@ def execute(stage):
     if stage=='verificar':
         return verify_registry(c)
     if stage=='all':
-        for phase in ('eda','candidatos','ablacion','llm','tuning','seleccion','verificar','report'):
+        for phase in ('eda','candidatos','ablacion','llm','tuning','seleccion','verificar'):
             print(f'FASE: {phase}',flush=True)
             execute(phase)
-        return {'status':'Completado; revisar estado_entrega.json en la caché local y limitaciones LLM/captura.'}
+        return {'status':'Fases completadas; corridas exportadas y registro verificado. El documento técnico se redacta por separado.'}
     raise ValueError(stage)
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('stage',choices=['snapshot','eda','candidatos','tuning','ablacion','llm','seleccion','verificar','report','all','notebooks','captura'])
+    parser.add_argument('stage',choices=['snapshot','eda','candidatos','tuning','ablacion','llm','seleccion','verificar','all','notebooks','captura'])
     args=parser.parse_args()
     result=execute(args.stage)
     print(json.dumps(result,indent=2,default=str,ensure_ascii=False))
