@@ -2,11 +2,13 @@ services:
   mlflow:
     image: python:3.12-slim
     working_dir: /mlflow
+    environment:
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
         pip install --no-cache-dir mlflow==3.18.0 &&
-        exec mlflow server --host 0.0.0.0 --port 5000
+        exec mlflow server --host 0.0.0.0 --port 5000 --workers 1
         --backend-store-uri sqlite:////mlflow/backend/mlflow.db
         --artifacts-destination /mlflow/artifacts --serve-artifacts
         --allowed-hosts 'localhost:*,127.0.0.1:*,mlflow:5000'

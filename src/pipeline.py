@@ -20,17 +20,19 @@ CATEGORICAL = ['cod_canton', 'provincia', 'region', 'dow_objetivo']
 def add_history(df):
     """Media de cuatro ocurrencias anteriores del weekday objetivo, conocidas al cierre t.
 
-    t+3 usa t-4,-11,-18,-25; t+7 usa t,t-7,-14,-21. Nunca shift negativo.
+    t+3 usa t-4,-11,-18,-25. Nunca shift negativo.
     Se calcula antes de recortar series para conservar el contexto de los bordes.
     """
     df = df.sort_values(['cod_canton', 'fecha']).copy()
     g = df.groupby('cod_canton').n_emergencias
-    for h in (3, 7):
+    for h in (3,):
         past = pd.concat([g.shift(7*k-h) for k in (1, 2, 3, 4)], axis=1)
         df[f'seasonal_t{h}'] = past.mean(axis=1).where(past.notna().all(axis=1))
     return df.sort_values(['fecha', 'cod_canton']).reset_index(drop=True)
 
-def model_input(df, horizon):
+def model_input(df, horizon=3):
+    if horizon != 3:
+        raise ValueError("Este proyecto solo admite t+3.")
     columns = ['fecha', 'cod_canton', 'provincia', 'region', 'n_emergencias',
                'lag_1d', 'lag_7d', 'lag_14d', 'lag_28d', 'media_prev_7d', 'media_prev_28d']
     x = df[columns].copy()
@@ -52,6 +54,8 @@ class FeatureBuilder(TransformerMixin, BaseEstimator):
         return self
 
     def transform(self, X):
+        if self.horizon != 3:
+            raise ValueError("Este proyecto solo admite t+3.")
         x = X.copy()
         target_date = pd.to_datetime(x['fecha']) + pd.Timedelta(days=self.horizon)
         dow = target_date.dt.day_of_week
@@ -67,6 +71,8 @@ class FeatureBuilder(TransformerMixin, BaseEstimator):
         return x[NUMERIC+CATEGORICAL].replace([np.inf, -np.inf], np.nan)
 
 def make_pipeline(estimator, horizon=3, derived=True):
+    if horizon != 3:
+        raise ValueError("Este proyecto solo admite t+3.")
     numeric = Pipeline([('imputer', SimpleImputer(strategy='median', keep_empty_features=True)),
                         ('scale', StandardScaler())])
     categorical = Pipeline([('imputer', SimpleImputer(strategy='most_frequent', keep_empty_features=True)),

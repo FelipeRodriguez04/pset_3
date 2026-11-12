@@ -13,7 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env', override=False)
 DATA = Path(os.getenv('PSET3_DATA_DIR', str(Path.home() / '.cache' / 'pset_3')))
 DOCS = Path(os.getenv('PSET3_DOCS_DIR', str(ROOT / 'docs')))
-EVIDENCE = DATA / 'evidencia'
+EVIDENCE = DATA / 'evidencia_t3'
+HORIZONS = (3,)
+LEGACY_LLM_PROMPT_SHA256 = 'e6dc49ff14457fc5e7a59b563fa77e1ec554b46330274f9554de19c035e9c4f0'
+LEGACY_T3_EXPERIMENT_HASH = '2c9b2b24d0968007e424d987f8ec9778daa82bdb7cc92bf90d9bb94b1a282f18'
+LEGACY_T3_COMPATIBLE_CONTRACT = '38e30b475be00c4046e5ac01e66a3fcea47da0963f2de18a47b00b873b50f8e5'
 SEED = 42
 PROJECT = os.getenv('MLFLOW_EXPERIMENT_NAME', 'ecu911-alta-demanda')
 TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://127.0.0.1:5001')
@@ -56,8 +60,7 @@ def normalize(df):
 def validate(df):
     required = {'fecha', 'cod_canton', 'provincia', 'region', 'n_emergencias',
                 'lag_1d', 'lag_7d', 'lag_14d', 'lag_28d', 'media_prev_7d',
-                'media_prev_28d', 'es_feriado_t3', 'es_feriado_t7',
-                'obj_n_emergencias_t3', 'obj_n_emergencias_t7'}
+                'media_prev_28d', 'es_feriado_t3', 'obj_n_emergencias_t3'}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f'Faltan columnas OBT: {sorted(missing)}')
@@ -65,7 +68,7 @@ def validate(df):
         raise ValueError('Grain inválido: fecha/cantón nulos o duplicados.')
     if df['n_emergencias'].isna().any() or (df['n_emergencias'] < 0).any():
         raise ValueError('Conteos nulos/negativos.')
-    if df[['es_feriado_t3', 'es_feriado_t7']].isna().any().any():
+    if df[['es_feriado_t3']].isna().any().any():
         raise ValueError('Calendario futuro incompleto: ampliar dim_fecha/feriados en PSet 2.')
     ordered = df.sort_values(['cod_canton', 'fecha'])
     if not ordered.groupby('cod_canton')['fecha'].diff().dropna().eq(pd.Timedelta(days=1)).all():
@@ -81,7 +84,7 @@ def validate(df):
         expected = grouped.transform(lambda s: s.shift(1).rolling(k, min_periods=k).mean())
         if not np.allclose(expected, ordered[f'media_prev_{k}d'], atol=0.00011, equal_nan=True):
             raise ValueError(f'media_prev_{k}d inconsistente.')
-    for h in (3, 7):
+    for h in HORIZONS:
         if not np.allclose(grouped.shift(-h), ordered[f'obj_n_emergencias_t{h}'], equal_nan=True):
             raise ValueError(f'Objetivo t+{h} inconsistente.')
     return {'rows': len(df), 'columns': len(df.columns), 'cantones': df.cod_canton.nunique(),
@@ -112,7 +115,7 @@ def snapshot_from_snowflake():
             query_id = cur.sfqid
             df = normalize(cur.fetch_pandas_all())
     # Los leads del último día se recortan al corte, aunque la tabla haya sido ampliada.
-    for h in (3, 7):
+    for h in HORIZONS:
         df.loc[df.fecha + pd.Timedelta(days=h) > pd.Timestamp(SNAPSHOT_END),
                f'obj_n_emergencias_t{h}'] = np.nan
     info = validate(df)
@@ -138,7 +141,7 @@ def partition(df, calibration_days=365, test_fraction=0.20, n_splits=3):
 
     El año inicial es parte del bloque de entrenamiento y se reserva para definir la
     etiqueta, antes de ver cualquier fold. Se congela la definición para comparar
-    exactamente el mismo problema entre familias/pliegues/horizontes.
+    exactamente el mismo problema entre familias/pliegues para t+3.
     """
     dates = np.sort(df.fecha.unique())
     calibration_end = pd.Timestamp(dates[0]) + pd.Timedelta(days=calibration_days - 1)
@@ -153,7 +156,7 @@ def partition(df, calibration_days=365, test_fraction=0.20, n_splits=3):
     path.write_text(json.dumps(manifest, indent=2))
     calibration = df[df.fecha <= calibration_end].copy()
     train = df[(df.fecha > calibration_end) & (df.fecha + pd.Timedelta(days=7) < cutoff)].copy()
-    test = df[(df.fecha >= cutoff) & df.obj_n_emergencias_t7.notna()].copy()
+    test = df[(df.fecha >= cutoff) & df.obj_n_emergencias_t3.notna()].copy()
     train = train.reset_index(drop=True)
     test = test.reset_index(drop=True)
     # TimeSeriesSplit sobre DÍAS, no sobre las filas intercaladas de 224 cantones.
@@ -170,7 +173,9 @@ def thresholds(calibration, quantile=0.90):
     tmp = calibration.assign(target_dow=calibration.fecha.dt.day_of_week)
     return tmp.groupby(['cod_canton', 'target_dow']).n_emergencias.quantile(quantile)
 
-def label(df, threshold, horizon):
+def label(df, threshold, horizon=3):
+    if horizon not in HORIZONS:
+        raise ValueError('Este experimento está limitado a t+3.')
     dow = (df.fecha + pd.Timedelta(days=horizon)).dt.day_of_week
     idx = pd.MultiIndex.from_arrays([df.cod_canton, dow], names=threshold.index.names)
     q = threshold.reindex(idx).to_numpy()
@@ -255,10 +260,10 @@ def run_eda(calibration, train, threshold):
                      'evidencia':f'media cantonal P10={per_canton.quantile(.1):.3f}, P90={per_canton.quantile(.9):.3f}',
                      'consecuencia':'Escalado dentro de fold, features relativas y evaluación por estrato de volumen.'})
     correlation_columns = ['n_emergencias','lag_1d','lag_7d','lag_14d','lag_28d',
-                           'media_prev_7d','media_prev_28d','seasonal_t3','seasonal_t7']
+                           'media_prev_7d','media_prev_28d','seasonal_t3']
     corr = train[correlation_columns].copy()
     prevalence = {}
-    for h in (3, 7):
+    for h in HORIZONS:
         y, _ = label(train, threshold, h)
         prevalence[str(h)] = float(y.mean())
         corr[f'y_t{h}'] = y
@@ -270,7 +275,7 @@ def run_eda(calibration, train, threshold):
     ax.set_yticks(range(len(corr)), corr.columns, fontsize=7)
     fig.colorbar(im, ax=ax); fig.tight_layout(); fig.savefig(out/'correlacion.png', dpi=160); plt.close(fig)
     findings.append({'hallazgo':'Distribución real de alta demanda',
-                     'evidencia':f'prevalencia train t+3={prevalence["3"]:.2%}, t+7={prevalence["7"]:.2%}',
+                     'evidencia':f'prevalencia train t+3={prevalence["3"]:.2%}',
                      'consecuencia':'Comparar AP (PR-AUC no interpolada); calibrar umbral en OOF, no en test.'})
     seasonal = train.assign(dow=train.fecha.dt.day_of_week).groupby('dow').n_emergencias.mean()
     findings.append({'hallazgo':'Patrón semanal observado',
@@ -333,9 +338,60 @@ def experiment_hash():
         h.update(ast.dump(tree,include_attributes=False).encode())
     return h.hexdigest()
 
+def training_contract_hash():
+    """Huella de las partes que determinan entrenamiento/etiquetas y compatibilidad t+3."""
+    names={'normalize','validate','load_snapshot','partition','thresholds','label','score',
+           'choose_threshold','fn_reduction','context','models','spaces','check_train_labels',
+           'evaluate','log_config','select_finalists','add_history','model_input','FeatureBuilder',
+           'make_pipeline','SeasonalClassifier','HORIZONS','NUMERIC','CATEGORICAL'}
+    digest=hashlib.sha256()
+    for path in sorted((ROOT/'src').glob('*.py')):
+        nodes=[]
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node,(ast.FunctionDef,ast.ClassDef)) and node.name in names:
+                nodes.append(node)
+            elif isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id in names for t in node.targets):
+                nodes.append(node)
+        digest.update(ast.dump(ast.Module(body=nodes,type_ignores=[]),include_attributes=False).encode())
+    return digest.hexdigest()
+
+def legacy_t3_compatible():
+    """Compatibilidad acotada a esta transición; futuros cambios científicos la invalidan."""
+    return training_contract_hash()==LEGACY_T3_COMPATIBLE_CONTRACT
+
+def tuning_parent(c,h,name):
+    """Reabre el padre de t+3 al retomar para mantener juntas sus 30 configuraciones."""
+    path=DATA/'tuning_padres_t3.json'
+    saved=json.loads(path.read_text()) if path.exists() else {}
+    if saved and (saved.get('context_id')!=c['id'] or saved.get('experiment_sha256')!=experiment_hash()):
+        raise ValueError('Los padres guardados pertenecen a otro protocolo.')
+    key=f'{h}:{name}'
+    if key in saved.get('parents',{}):
+        return saved['parents'][key]
+    parent_id=None
+    legacy_path=DATA/'tuning_plan_paralelo.json'
+    if legacy_path.exists() and legacy_t3_compatible():
+        plan=json.loads(legacy_path.read_text())
+        if plan.get('experiment_hash')==LEGACY_T3_EXPERIMENT_HASH:
+            item=next((g for g in plan.get('groups',[]) if g['h']==h and g['name']==name),None)
+            if item is not None:
+                parent_id=item['parent_id']
+    if parent_id is None:
+        experiment=mlflow.get_experiment_by_name(PROJECT)
+        parent=mlflow.MlflowClient().create_run(experiment.experiment_id,tags={
+            'mlflow.runName':f'tuning-padre-t{h}-{name}','fase':'tuning_padre',
+            'familia':name,'context_id':c['id'],'horizonte':str(h)})
+        parent_id=parent.info.run_id
+    saved.setdefault('parents',{})[key]=parent_id
+    saved.update(context_id=c['id'],experiment_sha256=experiment_hash())
+    dump(path,saved)
+    return parent_id
+
 def context():
     df, info = load_snapshot()
-    cal, train, test, folds, split = partition(add_history(df))
+    # La OBT de origen puede incluir columnas de otros horizontes; no entran al experimento.
+    model_df=df.drop(columns=['obj_n_emergencias_t7','es_feriado_t7'],errors='ignore')
+    cal, train, test, folds, split = partition(add_history(model_df))
     DATA.mkdir(parents=True, exist_ok=True); DOCS.mkdir(parents=True, exist_ok=True)
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     protocol={'split':split,'project':PROJECT,'seed':SEED,'cost_fn':COST_FN,
@@ -343,7 +399,7 @@ def context():
     context_id = hashlib.sha256((info['sha256']+json.dumps(protocol,sort_keys=True)).encode()).hexdigest()[:16]
     mlflow.set_tracking_uri(TRACKING_URI)
     mlflow.set_experiment(PROJECT)
-    return {'cal':cal, 'train':train, 'test':test, 'folds':folds,
+    return {'horizons':HORIZONS, 'cal':cal, 'train':train, 'test':test, 'folds':folds,
             'p90':thresholds(cal), 'info':info, 'split':split, 'id':context_id}
 
 def models():
@@ -411,11 +467,20 @@ def evaluate(estimator, x, y, folds, rule=False):
             'elapsed_seconds':time.perf_counter()-start}, out, fold_rows, caught
 
 def log_config(c, h, name, estimator, phase, params=None, nested=False, derived=True):
+    if h not in HORIZONS:
+        raise ValueError('Solo se pueden entrenar configuraciones t+3.')
     key=hashlib.sha256(json.dumps({'context_id':c['id'],'h':h,'name':name,'phase':phase,
         'params':params or {},'derived':derived,'protocol':experiment_hash()},sort_keys=True,default=str).encode()).hexdigest()
     checkpoint=DATA/'configuraciones'/f'{key}.json'
     if checkpoint.exists():
         return json.loads(checkpoint.read_text())
+    if legacy_t3_compatible():
+        old_key=hashlib.sha256(json.dumps({'context_id':c['id'],'h':h,'name':name,'phase':phase,
+            'params':params or {},'derived':derived,'protocol':LEGACY_T3_EXPERIMENT_HASH},
+            sort_keys=True,default=str).encode()).hexdigest()
+        old_checkpoint=DATA/'configuraciones'/f'{old_key}.json'
+        if old_checkpoint.exists():
+            return json.loads(old_checkpoint.read_text())
     print(f'INICIO {phase} t+{h} {name} {params or {}}',flush=True)
     x = model_input(c['train'], h)
     y,q = label(c['train'], c['p90'], h)
@@ -476,9 +541,13 @@ def read_stage(stage, c):
     state = json.loads(path.read_text())
     if state['context_id'] != c['id']:
         raise ValueError('El estado pertenece a otro snapshot/split/proyecto.')
-    if state.get('experiment_sha256') != experiment_hash():
-        raise ValueError('El código cambió después de ejecutar una fase; usar un experimento/directorio nuevo.')
-    return state['results']
+    current=state.get('experiment_sha256')==experiment_hash()
+    compatible=(stage in {'candidatos','candidatos_parcial','ablacion','tuning'} and
+                state.get('experiment_sha256')==LEGACY_T3_EXPERIMENT_HASH and legacy_t3_compatible())
+    if not (current or compatible):
+        raise ValueError('El protocolo cambió: no se pueden reutilizar estas corridas automáticamente.')
+    rows=[r for r in state['results'] if r.get('horizon')==3]
+    return rows or None
 
 def save_stage(stage, c, rows):
     dump(stage_path(stage), {'context_id':c['id'], 'source_sha256':git_info()[2],
@@ -487,7 +556,7 @@ def save_stage(stage, c, rows):
 
 def export_runs(c):
     exp = mlflow.get_experiment_by_name(PROJECT)
-    runs = mlflow.search_runs([exp.experiment_id], filter_string=f"tags.context_id = '{c['id']}'", max_results=100000)
+    runs = mlflow.search_runs([exp.experiment_id], filter_string=f"tags.context_id = '{c['id']}' and tags.horizonte = '3'", max_results=100000)
     runs.to_csv(DOCS / 'corridas.csv', index=False)
     return runs
 
@@ -496,11 +565,11 @@ def candidates(c):
     if cached is not None:
         return cached
     rows = []
-    # Ambas líneas base se entrenan ANTES de cualquier candidato, para ambos horizontes.
-    for h in (3,7):
+    # Las dos líneas base se entrenan ANTES de los cinco candidatos de t+3.
+    for h in HORIZONS:
         rows.append(log_config(c,h,'dummy',DummyClassifier(strategy='most_frequent'),'baseline'))
         rows.append(log_config(c,h,'estacional',None,'baseline'))
-    for h in (3,7):
+    for h in HORIZONS:
         for name,est in models().items():
             rows.append(log_config(c,h,name,est,'candidato'))
             save_stage('candidatos_parcial',c,rows)
@@ -523,12 +592,13 @@ def tuning(c, n_iter=30):
         raise RuntimeError('Ejecutar fase candidatos primero.')
     best = []
     all_trials = []
-    for h in (3,7):
+    for h in HORIZONS:
         top = sorted([r for r in rows if r['horizon']==h and r['phase']=='candidato'],
                      key=lambda r:r['cv_ap_mean'], reverse=True)[:3]
         for default in top:
             name = default['name']
-            with mlflow.start_run(run_name=f'tuning-padre-t{h}-{name}'):
+            parent_id=tuning_parent(c,h,name)
+            with mlflow.start_run(run_id=parent_id):
                 mlflow.set_tags({'fase':'tuning_padre','familia':name,'context_id':c['id'],'horizonte':str(h)})
                 mlflow.log_params({'seed':SEED,'n_configurations':n_iter})
                 trials = []
@@ -558,7 +628,7 @@ def ablation(c):
     defaults=read_stage('candidatos',c)
     if defaults is None:
         raise RuntimeError('Ejecutar candidatos antes de la ablación.')
-    for h in (3,7):
+    for h in HORIZONS:
         with_features=next(r for r in defaults if r['name']=='logistica' and r['horizon']==h)
         without=log_config(c,h,'logistica',models()['logistica'],'ablacion',derived=False)
         rows.append({'horizon':h,'run_id':without['run_id'], 'without_ap':without['cv_ap_mean'],
@@ -614,11 +684,11 @@ def final(c):
         raise RuntimeError('Hold-out ya abierto: revisar fallo con sus resultados parciales, sin reseleccionar.')
     # Congelar ambos finalistas y umbrales antes de cualquier inferencia sobre test.
     plan={str(h):select_finalists([r for r in defaults+tuned if r['horizon']==h and r['phase'] in ('candidato','tuning')])
-          for h in (3,7)}
+          for h in HORIZONS}
     dump(lock,plan)
     results=[]
     client=mlflow.MlflowClient()
-    for h in (3,7):
+    for h in HORIZONS:
         finalists=plan[str(h)]
         x=model_input(c['test'],h)
         y,q=label(c['test'],c['p90'],h)
@@ -659,7 +729,7 @@ def final(c):
                 info=mlflow.sklearn.log_model(pipe,name='pipeline',serialization_format='cloudpickle',input_example=x.head(3),
                     signature=infer_signature(x.head(3),pipe.predict_proba(x.head(3))),
                     pyfunc_predict_fn='predict_proba',code_paths=[str(ROOT/'src')])
-                # Un registro por horizonte evita que @champion mezcle dos targets.
+                # Registro exclusivo de t+3; champion y challenger son sus dos finalistas.
                 registry_name=f'{PROJECT}-t{h}-modelo'
                 version=mlflow.register_model(info.model_uri,registry_name)
                 client.set_registered_model_alias(registry_name,alias,version.version)
@@ -757,15 +827,36 @@ def llm_trial(c):
                 'applicable':True,'design':'Zero-shot sobre muestra del último fold de CV; no se considera competidor del ranking completo.'}
         dump(EVIDENCE /'llm_status.json',status)
         return status
-    cached=DATA/'llm.json'
+    requested_rows=int(os.getenv('LLM_MAX_ROWS','100'))
+    cache_key={'context_id':c['id'],'model':model,'base_url':url,'rows':requested_rows,
+               'prompt_sha256':hashlib.sha256(PROMPT.encode()).hexdigest()}
+    cached=DATA/'llm_t3.json'
     if cached.exists():
-        return json.loads(cached.read_text())
+        saved=json.loads(cached.read_text())
+        if saved.get('key')==cache_key:
+            outputs=[r for r in saved['results'] if r.get('horizon')==3]
+            dump(EVIDENCE/'llm_status.json',outputs)
+            return outputs
+    old_llm=DATA/'llm.json'
+    if old_llm.exists() and legacy_t3_compatible():
+        old=[r for r in json.loads(old_llm.read_text()) if r.get('horizon')==3]
+        old_metadata=DATA/'evidencia'/'ollama_metadata.json'
+        metadata=json.loads(old_metadata.read_text()) if old_metadata.exists() else {}
+        old_candidates=json.loads((DATA/'candidatos.json').read_text()) if (DATA/'candidatos.json').exists() else {}
+        if (old and old_candidates.get('context_id')==c['id'] and metadata.get('model')==model
+                and url in {'http://127.0.0.1:11434/v1','http://localhost:11434/v1'}
+                and requested_rows==old[0]['rows']
+                and cache_key['prompt_sha256']==LEGACY_LLM_PROMPT_SHA256):
+            dump(cached,{'key':cache_key,'results':old}); dump(EVIDENCE/'llm_status.json',old)
+            dump(EVIDENCE/'ollama_metadata.json',metadata)
+            export_runs(c)
+            return old
     outputs=[]
-    for h in (3,7):
+    for h in HORIZONS:
         x=model_input(c['train'],h)
         y,q=label(c['train'],c['p90'],h)
         last=c['folds'][-1][1]
-        n=min(int(os.getenv('LLM_MAX_ROWS','100')),len(last))
+        n=min(requested_rows,len(last))
         rng=np.random.default_rng(SEED)
         indices=np.sort(rng.choice(last,n,replace=False))
         if len(np.unique(y[indices]))<2:
@@ -793,7 +884,7 @@ def llm_trial(c):
             mlflow.log_dict({'responses':replies},'responses.json')
             # Comparación justa: solo las mismas filas, usando predicciones OOF ya existentes.
             comparison=[]
-            candidates=json.loads((DATA/'candidatos.json').read_text())['results']
+            candidates=read_stage('candidatos',c)
             for r in candidates:
                 if r['horizon']!=h:
                     continue
@@ -804,7 +895,7 @@ def llm_trial(c):
                   'comparison_same_rows':comparison,'status':'EJECUTADO',
                   'limitation':'Muestra pequeña; no sustituye CV completa, temperatura 0 no garantiza determinismo del proveedor.'}
             mlflow.log_dict(item,'comparison.json'); outputs.append(item)
-    dump(cached,outputs); dump(EVIDENCE /'llm_status.json',outputs); export_runs(c)
+    dump(cached,{'key':cache_key,'results':outputs}); dump(EVIDENCE /'llm_status.json',outputs); export_runs(c)
     return outputs
 
 # REPORTE
@@ -827,273 +918,261 @@ def read_json(path, default=None):
     return json.loads(path.read_text()) if path.exists() else default
 
 def build_report():
-    DOCS.mkdir(parents=True, exist_ok=True)
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    """Ocho apartados del enunciado en seis páginas; solo evidencia efectivamente observada."""
+    DOCS.mkdir(parents=True,exist_ok=True); EVIDENCE.mkdir(parents=True,exist_ok=True)
     snapshot=read_json(DATA/'snapshot.json',{})
-    findings=read_json(EVIDENCE /'eda/findings.json',{})
-    candidates=read_json(DATA/'candidatos.json',{}).get('results',[])
-    tuned=read_json(DATA/'tuning.json',{}).get('results',[])
-    selected=read_json(DATA/'seleccion.json',{}).get('results',[])
-    llm=read_json(EVIDENCE /'llm_status.json',{'status':'PENDIENTE: sin endpoint configurado.'})
-    synthetic=snapshot.get('synthetic',False)
-    ready=bool(selected) and not synthetic
-    status='RESULTADOS REALES' if ready else ('PRUEBA SINTÉTICA; NO ENTREGAR COMO RESULTADOS ECU 911' if synthetic else 'BORRADOR: EJECUCIÓN CON SNOWFLAKE PENDIENTE')
+    finding=read_json(EVIDENCE/'eda/findings.json',{})
+    default=[r for r in read_json(DATA/'candidatos.json',{}).get('results',[]) if r.get('horizon')==3]
+    tuned=[r for r in read_json(DATA/'tuning.json',{}).get('results',[]) if r.get('horizon')==3]
+    selected=[r for r in read_json(DATA/'seleccion.json',{}).get('results',[]) if r.get('horizon')==3]
+    ablated=[r for r in read_json(DATA/'ablacion.json',{}).get('results',[]) if r.get('horizon')==3]
+    llm=read_json(EVIDENCE/'llm_status.json',{})
+    split=read_json(DATA/'split.json',{})
+    verified=read_json(EVIDENCE/'verificacion_registry.json',[])
+    runs=pd.read_csv(DOCS/'corridas.csv') if (DOCS/'corridas.csv').exists() else pd.DataFrame()
+    if 'tags.horizonte' in runs:
+        runs=runs[pd.to_numeric(runs['tags.horizonte'],errors='coerce').eq(3)]
+    else:
+        runs=runs.iloc[0:0]
+    finished=runs[runs.status.eq('FINISHED')] if 'status' in runs else runs
+    counts=finished.get('tags.fase',pd.Series(dtype=str)).value_counts().to_dict()
+    real=bool(snapshot) and not snapshot.get('synthetic',True)
+    complete=(real and len(selected)==2 and len(tuned)==3 and isinstance(llm,list) and len(llm)==1
+              and len(verified)==2 and counts.get('baseline',0)>=2 and counts.get('candidato',0)>=5
+              and counts.get('tuning',0)>=90 and counts.get('final',0)>=2)
     styles=getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='BodyLocal',fontName='Helvetica',fontSize=9,leading=12,spaceAfter=7))
-    styles.add(ParagraphStyle(name='SmallLocal',fontName='Helvetica',fontSize=7.3,leading=9,spaceAfter=5))
+    body=ParagraphStyle('body',fontName='Helvetica',fontSize=8.4,leading=10.6,spaceAfter=6)
+    small=ParagraphStyle('small',fontName='Helvetica',fontSize=6.9,leading=8.1,spaceAfter=4)
+    heading=ParagraphStyle('heading',fontName='Helvetica-Bold',fontSize=13,leading=16,spaceAfter=7,spaceBefore=5)
     story=[]; md=[]
-    def p(text,small=False):
-        story.append(Paragraph(text,styles['SmallLocal' if small else 'BodyLocal']))
-        md.append(text.replace('<b>','**').replace('</b>','**').replace('<br/>','\n'))
-    def title(text):
-        story.append(Paragraph(text,styles['Heading1'])); md.append('\n# '+text+'\n')
-    def table(headers,rows,widths=None):
-        data=[[Paragraph(escape(str(v)),styles['SmallLocal']) for v in row] for row in [headers]+rows]
-        t=Table(data,colWidths=widths,repeatRows=1,hAlign='LEFT')
-        t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#dcecf1')),
-                              ('VALIGN',(0,0),(-1,-1),'TOP'),('BOTTOMPADDING',(0,0),(-1,-1),5),
-                              ('TOPPADDING',(0,0),(-1,-1),4),
-                              ('LINEBELOW',(0,0),(-1,0),.7,colors.HexColor('#167d9a'))]))
-        story.extend([t,Spacer(1,8)])
-        md.append('\n'+' | '.join(headers)+'\n'+' | '.join(['---']*len(headers)))
-        md.extend(' | '.join(map(str,row)) for row in rows)
-    def image(path,width=460,height=175):
+    def p(value,tiny=False):
+        story.append(Paragraph(value,small if tiny else body)); md.append(value)
+    def title(value):
+        story.append(Paragraph(value,heading)); md.append('\n# '+value)
+    def table(headers,rows,widths):
+        data=[[Paragraph(escape(str(v)),small) for v in row] for row in [headers]+rows]
+        tab=Table(data,colWidths=widths,repeatRows=1,hAlign='LEFT')
+        tab.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#dcecf1')),
+            ('VALIGN',(0,0),(-1,-1),'TOP'),('TOPPADDING',(0,0),(-1,-1),3),
+            ('BOTTOMPADDING',(0,0),(-1,-1),3),('LINEBELOW',(0,0),(-1,0),.5,colors.HexColor('#167d9a'))]))
+        story.extend([tab,Spacer(1,6)])
+        md.append(' | '.join(headers)); md.extend(' | '.join(map(str,r)) for r in rows)
+    def picture(path,height=150):
         if path.exists():
-            from PIL import Image as PILImage
-            with PILImage.open(path) as im:
-                w,h=im.size
-            ratio=min(width/w,height/h)
-            story.append(Image(str(path),width=w*ratio,height=h*ratio))
-    def next_page():
-        story.append(PageBreak())
-
-    title('PSet 3 · Experimentación ECU 911')
-    p('<b>'+status+'</b>')
-    p('Jarod Tierra · Felipe Rodríguez · Santiago Rodríguez · Juan Diego Cadena · Miguel Jarrín')
-    p('Predecir demanda alta por cantón a t+3 y t+7. Se conserva '
-      'y=1 cuando el conteo futuro supera estrictamente el P90 del cantón y weekday objetivo. '
-      'La salida apoya la revisión humana de turnos; no asigna recursos. La meta del PSet 1 es '
-      'reducir 10% los falsos negativos frente a la regla estacional, al menos a t+3.')
-    p('Fuente: ECU911.OBT.OBT_EMERGENCIAS_CANTON_DIA. El repositorio del PSet 2, commit '
-      'cc4df2dc56d9f17691956ba9c325245726eeba9b, documenta 422.912 filas, 224 unidades, 37 columnas '
-      'y cobertura 2021-07 a 2026-08. Son antecedentes del PSet 2, no conteos revalidados en este experimento.')
+            from PIL import Image as PI
+            with PI.open(path) as im:w,h=im.size
+            scale=min(490/w,height/h)
+            story.append(Image(str(path),width=w*scale,height=h*scale))
+    def page():story.append(PageBreak())
+    def f(value,n=3):return 'NA' if value is None else f'{value:.{n}f}'
+    def pct(value):return 'indefinida' if value is None else f'{value:.1%}'
+    names={'dummy':'Dummy','estacional':'Estacional','logistica':'Logística',
+           'random_forest':'Random forest','hist_boosting':'Hist boosting','mlp':'MLP','gaussian_nb':'GaussianNB'}
+    title('PSet 3 · Experimentación y selección del modelo')
+    p('Tierra · Rodríguez · Rodríguez · Cadena · Jarrín · ECU 911',True)
+    p('<b>'+('RESULTADOS REALES VERIFICADOS' if complete else 'RESULTADOS PARCIALES: ejecución t+3 pendiente de completar')+'</b>',True)
+    p('Objetivo del PSet 1: anticipar alta demanda cantonal a t+3 para revisión humana; '
+      'reducir al menos 10% los días de alta demanda no anticipados frente a la regla estacional. '
+      'Se conserva y=1 cuando el conteo objetivo supera estrictamente P90 del cantón y weekday.')
     if snapshot:
-        p(f'Snapshot local: {snapshot.get("rows")} filas; corte {snapshot.get("snapshot_end")}; '
-          f'SHA256: {snapshot.get("sha256")}.',small=True)
-    else:
-        p('<b>Estado:</b> no existe snapshot autenticado en esta carpeta. La conexión local probada '
-          'devolvió un error de autenticación. No se reportan métricas, hallazgos empíricos nuevos ni un ganador.')
+        p(f'Fuente: {snapshot["source_table"]}. Snapshot {snapshot["date_min"]} a {snapshot["date_max"]}; '
+          f'{snapshot["rows"]:,} filas × {snapshot["columns"]} columnas, {snapshot["cantones"]} unidades. '
+          'La OBT actual amplía el histórico del PSet 2 hasta septiembre de 2026.',True)
+        p('SHA256: '+snapshot['sha256'],True)
     title('1. EDA')
-    p('El notebook 01 inspecciona tipos, tamaño, nulos por columna, '
-      'descriptivos, target, IQR y |Z|>=3. Se usa Spearman por tratarse de conteos asimétricos '
-      'y relaciones potencialmente monótonas. Se conservan los picos: son la señal de negocio. '
-      'La EDA que guía modelos usa solo el bloque de entrenamiento posterior al año inicial de calibración.')
-    if findings:
-        table(['Hallazgo / evidencia','Consecuencia'],[[r['hallazgo']+': '+r['evidencia'],r['consecuencia']]
-              for r in findings['findings'][:3]],[275,210])
-        image(EVIDENCE /'eda/distribucion_boxplot.png',height=145)
-    else:
-        table(['Verificación pendiente','Decisión prevista, sujeta a evidencia'],[
-          ['Asimetría, ceros y escalas cantonales','Ratios de volumen; conservar outliers; evaluar por estrato.'],
-          ['Prevalencia real por horizonte','AP común a todos; umbral con precision mínima.'],
-          ['Patrón semanal y correlación con target','Calendario cíclico y media de cuatro weekdays.']],[230,255])
-        p('Estas son hipótesis de diseño, no tres hallazgos ya observados. Los conteos y gráficos se '
-          'insertan automáticamente al ejecutar la EDA real.',small=True)
-    next_page()
-
+    p('La EDA que guía decisiones usa train; el hold-out permanece reservado. Se revisaron '
+      'esquema/nulos, descriptivos, prevalencia, IQR y |Z|>=3. Se usa Spearman por asimetría '
+      'y asociaciones monótonas; no se eliminan picos automáticamente porque son el fenómeno objetivo.')
+    if finding:
+        table(['Hallazgo y evidencia en train','Consecuencia experimental'],[
+            [r['hallazgo']+': '+r['evidencia'],r['consecuencia']] for r in finding['findings']], [285,205])
+        picture(EVIDENCE/'eda/distribucion_boxplot.png',140)
+        p(f'Train: {finding["train_rows"]:,} filas. El año inicial de calibración tiene '
+          f'{finding["calibration_rows"]:,} filas y se reserva para P90. Esquema, descriptivos, '
+          'nulos y outliers por columna se muestran completos en el notebook 01.',True)
+    else:p('EDA pendiente: no se inventan hallazgos.')
+    page()
     title('2. Features')
-    p('src/pipeline.py contiene las transformaciones; los notebooks las importan. '
-      'Las derivaciones son deterministas y las que usan historia se calculan con desplazamientos no negativos.')
-    table(['Feature','Disponibilidad / razón'],[
-      ['tendencia_7_28 = (media7+1)/(media28+1)','Ambas medias excluyen t; representa cambio relativo de nivel.'],
-      ['cambio_semanal = (n_t - lag7)/(lag7+1)','Disponible al cierre t bajo fuente diaria oportuna; compara semanas.'],
-      ['estacional_relativa = (media4_weekday+1)/(media28+1)','t+3: t-4,-11,-18,-25; t+7: t,t-7,-14,-21.'],
-      ['sin/cos de weekday y mes objetivo','Calendario futuro conocido; geometría cíclica.'],
-      ['Cantón, provincia, región, weekday objetivo','One-hot dentro del fold; categorías desconocidas ignoradas.']],[245,240])
-    p('La EDA registra el patrón semanal y la dispersión cantonal; la ablación de ratios con logística '
-      'compara AP con/sin derivadas en idénticos pliegues. Si no supera la variación entre pliegues, '
-      'no se afirma aporte demostrado. La relación con EDA queda pendiente hasta observar datos reales.')
-    p('<b>Disponibilidad real.</b> El histórico público es mensual. Usar n_t y lags diarios simula una '
-      'fuente disponible al cierre t. Las conclusiones son retrospectivas y condicionales a integrar un '
-      'feed diario; no se demuestra disponibilidad operacional con el portal mensual. Se excluyen obj_*, '
-      'nombre_feriado, indicadores retrospectivos como es_periodo_anomalo y columnas fuera de la allowlist.')
+    table(['Derivada / codificación','Justificación y disponibilidad'],[
+        ['tendencia_7_28=(media7+1)/(media28+1)','Escalas cantonales muy distintas en EDA; cambio relativo de nivel. Ambas medias usan pasado anterior a t.'],
+        ['cambio_semanal=(n_t-lag7)/(lag7+1)','Contraste con la semana previa; n_t conocido al cierre t bajo feed diario.'],
+        ['estacional_relativa=(media4_weekday+1)/(media28+1)','EDA muestra patrón semanal. Para t+3 usa exclusivamente t-4,-11,-18,-25.'],
+        ['sin/cos del weekday y mes objetivo','Calendario conocido de antemano; representa ciclos sin saltos artificiales.'],
+        ['Cantón/provincia/región/weekday','One-hot ajustado al train de cada fold; categorías nuevas ignoradas.']],[240,250])
+    p('Prueba de disponibilidad: las derivaciones no usan desplazamientos negativos ni obj_*. '
+      'Se excluyen columnas fuera de la allowlist y la marca retrospectiva de anomalía. '
+      'La disponibilidad diaria es un supuesto de evaluación retrospectiva: el portal público publica por mes.')
+    if ablated:
+        table(['Horizonte','AP sin ratios','AP con ratios','Delta / > SD'],[
+            [f't+{r["horizon"]}',f(r['without_ap']),f(r['with_ap']),f'{f(r["delta"])} / {r["exceeds_std"]}'] for r in ablated], [90,120,120,160])
+        p('Ablación con logística, mismos folds: retirar conjuntamente los tres ratios. Una mejora '
+          'menor a la variación entre pliegues no demuestra aporte; no se oculta un resultado negativo.',True)
     title('3. Preparación y validación')
-    p('Métrica técnica: AP (PR-AUC no interpolada). Métrica de negocio: reducción de falsos negativos frente al baseline estacional; meta del 10% del PSet 1. Ambas se conservan para los dos horizontes.')
-    p('El primer año completo se reserva para estimar P90 por cantón/weekday; '
-      'pertenece al bloque de entrenamiento y no se usa para entrenar clasificadores. Ese umbral se congela '
-      'antes de todos los pliegues, evitando definir la etiqueta con futuro del fold. El 20% final de fechas '
-      'es hold-out; se retiran siete días anteriores al corte. Train usa los días restantes posteriores '
-      'al año inicial. Se excluyen objetivos t+7 no observados para comparar ambos horizontes en las mismas fechas.')
-    p('CV: tres pliegues expansivos con TimeSeriesSplit sobre días únicos, gap=7 días, y todos los '
-      'cantones de cada día en un mismo bloque. Se verifica max(fecha_train)+7 &lt; min(fecha_validación). '
-      'Aplicar el split directamente sobre filas cantón-día podría mezclar el mismo día entre particiones.')
-    p('Mediana, one-hot y StandardScaler viven en Pipeline/ColumnTransformer y se ajustan solo en '
-      'fit del fold. El modelo final se ajusta a todo train sin test. El split y hash quedan persistidos; '
-      'un cambio exige un nuevo experimento, no volver a optimizar contra el hold-out.')
-    next_page()
-
+    p(f'Calibración P90: primer año, hasta {split.get("calibration_end","pendiente")}; es parte del '
+      'bloque de entrenamiento, separado del ajuste de clasificadores. P90 se congela antes de los folds '
+      f'para mantener la misma etiqueta. Hold-out: 20% final de fechas, desde {split.get("test_start","pendiente")}; '
+      'se retiran siete días previos al corte y los objetivos finales no observados.')
+    p('Tres folds expansivos con TimeSeriesSplit sobre fechas únicas y gap de siete días. Todos los '
+      'cantones del día permanecen juntos; max(fecha_train)+7 &lt; min(fecha_validación). Mediana, '
+      'StandardScaler y one-hot se ajustan exclusivamente con train en Pipeline/ColumnTransformer de src/pipeline.py.')
+    p('Métrica técnica común: Average Precision (AP, PR-AUC no interpolada). Métrica de negocio: '
+      '(FN_estacional - FN_modelo)/FN_estacional; indefinida si FN_estacional=0. El umbral se fija '
+      f'en OOF minimizando {COST_FN:g}FN+{COST_FP:g}FP con precision>={MIN_PRECISION:.2f}; son supuestos '
+      'relativos de sensibilidad, no dólares ni costos validados con ECU 911.')
+    picture(EVIDENCE/'eda/correlacion.png',145)
+    page()
     title('4. Diseño experimental')
-    p('Se entrenan primero DummyClassifier (clase más frecuente) y la regla '
-      'del PSet 1: promedio de cuatro ocurrencias anteriores del weekday objetivo &gt; P90. El score '
-      'estacional ordena por media/P90 y no representa una probabilidad calibrada. Después se comparan '
-      'cinco familias con defaults de sklearn y semilla fija: logística, random forest, hist gradient '
-      'boosting, MLP y GaussianNB. La quinta familia probabilística evita añadir dependencias de modelos fundacionales.')
-    p('Métrica común: Average Precision (AP), definida como PR-AUC no interpolada, adecuada al target '
-      'desbalanceado. Se reportan AP de train, promedio ± desviación muestral de CV, brecha y segundos '
-      'totales de CV más ajuste final. Una brecha positiva alta es evidencia compatible con sobreajuste; '
-      'no se diagnostica solo por la AP de entrenamiento.')
-    table(['Fase','Por horizonte','Total t+3 / t+7'],[
-      ['Baselines','2','4'],['Candidatos','5','10'],['Tuning','3 × 30','180 hijas + 6 padres'],
-      ['Final','2 finalistas','4'],['Ablación','1','2'],['LLM prompting','1, si hay endpoint','2 adicionales']],[195,140,150])
-    p('Presupuesto implementado: 198 corridas evaluadas sin LLM (4+10+180+4), más dos ablaciones '
-      'y seis padres de tuning. Los experimentos sintéticos no cuentan como evidencia del ECU 911.')
-    p('Cada configuración registra semilla e hiperparámetros, tabla, corte y SHA256, métricas, '
-      'folds, advertencias, fase, familia, commit/estado de Git y hash del código. Se almacena '
-      'pipeline completo con firma y ejemplo de entrada. Los artefactos se sirven por MLflow; SQLite '
-      'y archivos viven en dos volúmenes persistentes de Docker. docs/corridas.csv se exporta con mlflow.search_runs.')
-    if isinstance(llm,list):
-        p('LLM ejecutado: '+ '; '.join(f't+{r["horizon"]}: AP={r["metrics"]["ap"]:.4f}, n={r["rows"]}' for r in llm))
-    else:
-        p('<b>Evaluación LLM pendiente.</b> Se configuró qwen2.5:1.5b mediante Ollama local, sin API key. '
-          'src/datos.py (llm_trial) prepara zero-shot sobre una muestra del último fold, '
-          'sin nombres geográficos ni fechas exactas. Falta la OBT real para medir su desempeño. '
-          'Se compara contra candidatos en las mismas filas; '
-          'esa muestra no sustituye CV completa ni participa en la selección final.')
-    if (EVIDENCE /'mlflow_comparacion.png').exists():
-        image(EVIDENCE /'mlflow_comparacion.png',height=175)
-    else:
-        p('<b>Captura de comparación MLflow pendiente:</b> generar con -m src.datos captura después de las corridas reales.')
-    next_page()
-
+    p('Primero se entrenaron las dos bases para t+3: Dummy de clase más frecuente y '
+      'regla del PSet 1 (promedio de cuatro weekdays previos > P90). Su score media/P90 sirve '
+      'para ordenar, no es probabilidad calibrada. Cinco familias con defaults salvo semilla: '
+      'logística, random forest, hist gradient boosting, MLP y GaussianNB. Igual preparación, fechas y AP.')
+    table(['Fase','Plan t+3','Corridas terminadas'],[
+        ['Baselines','2',counts.get('baseline',0)],['Candidatos','5',counts.get('candidato',0)],
+        ['Tuning','90 hijas + 3 padres',str(counts.get('tuning',0))+' + '+str(counts.get('tuning_padre',0))],
+        ['Final','2 finalistas',counts.get('final',0)],['Ablación / LLM','1 / 1',str(counts.get('ablacion',0))+' / '+str(counts.get('llm',0))]], [110,230,150])
+    p('MLflow en Docker: backend SQLite y artifact store en volúmenes persistentes, servidos por proxy. '
+      'Cada configuración guarda hiperparámetros/semilla, tabla/corte/hash, train AP, CV media y SD, '
+      'tiempos, folds, advertencias, fase/familia y commit/hash de código. Se registra el pipeline '
+      'completo con firma y ejemplo. Tuning usa corridas hijas; docs/corridas.csv se exporta con mlflow.search_runs.')
+    if isinstance(llm,list) and llm:
+        table(['Prueba zero-shot Qwen 2.5 1.5B local','AP','Precision / recall'],[
+            [f't+{r["horizon"]}: n={r["rows"]}; run {r["run_id"]}',f(r['metrics']['ap']),
+             f'{f(r["metrics"]["precision"])} / {f(r["metrics"]["recall"])}'] for r in llm],[300,70,120])
+        p('Ollama sin API key: JSON con probability, temperatura 0, prompt y respuestas guardados. '
+          'Muestra aleatoria del último fold, sin etiquetas en el prompt y sin test. Se comparó contra '
+          'OOF de las mismas filas. Umbral exploratorio .70 del memo; la muestra no participa en el '
+          'ranking de CV completa ni prueba calibración.',True)
+        r=next(r for r in llm if r['horizon']==3)
+        comparison=[[names[a['name']],f(a['ap'])] for a in r['comparison_same_rows']]
+        comparison.append(['Qwen 2.5 1.5B',f(r['metrics']['ap'])])
+        table(['AP en las MISMAS 100 filas de validación t+3','AP'],comparison,[390,100])
+        p('El experimento con LLM es exploratorio y se limita a t+3; la tabla muestra '
+          'el resultado observado sin extrapolarlo a otros horizontes.',True)
+    else:p('Evaluación LLM pendiente. Ollama local qwen2.5:1.5b está configurado; no se atribuyen resultados sin ejecutar.')
+    picture(EVIDENCE/'mlflow_comparacion.png',230)
+    if not (EVIDENCE/'mlflow_comparacion.png').exists():p('Captura real de comparación MLflow pendiente.',True)
+    page()
     title('5. Resultados')
-    p('LR es la tasa de aprendizaje; NA significa que no corresponde al estimador. '
-      'Los defaults se mantienen salvo semilla; las advertencias de convergencia quedan en MLflow.')
-    if candidates:
-        table(['h / modelo','Train AP','CV AP ± SD','Brecha','LR','seg.'],[
-          [f'{r["horizon"]} / {r["name"]}',f'{r["train_ap"]:.3f}',f'{r["cv_ap_mean"]:.3f} ± {r["cv_ap_std"]:.3f}',
-           f'{r["gap"]:.3f}',str(r['learning_rate']),f'{r["fit_seconds"]:.1f}'] for r in candidates],
-          [125,60,110,60,50,65])
-        fig,ax=plt.subplots(figsize=(8,3))
-        for h,offset in [(3,-.15),(7,.15)]:
-            rs=[r for r in candidates if r['horizon']==h]
-            ax.errorbar(range(len(rs)),[r['cv_ap_mean'] for r in rs],yerr=[r['cv_ap_std'] for r in rs],
-                        fmt='o',capsize=3,label=f't+{h}')
-        ax.set_xticks(range(len(rs)),[r['name'] for r in rs],rotation=20,ha='right',fontsize=8)
-        ax.set(ylabel='AP de CV ± SD'); ax.legend(); fig.tight_layout()
-        fig.savefig(EVIDENCE /'comparacion_modelos.png',dpi=160); plt.close(fig)
-        image(EVIDENCE /'comparacion_modelos.png',height=160)
-        failures=[f't+{r["horizon"]} {r["name"]}' for r in candidates if r.get('beats_both_baselines') is False]
-        p('No superan ambas líneas base por AP de CV: '+(', '.join(failures) if failures else 'ninguno.') ,small=True)
-    else:
-        table(['Familia','Train / CV / brecha / LR / tiempo'],[[n,'PENDIENTE DE SNOWFLAKE'] for n in
-              ['Dummy','Regla estacional','Logística','Random forest','Hist boosting','MLP','GaussianNB']],[175,310])
-        p('No hay mediciones reales. La tabla se reemplaza al ejecutar las fases de entrenamiento. '
-          'La ausencia de métricas impide concluir qué familia supera ambas líneas base o si hay sobreajuste.')
-    abl=read_json(DATA/'ablacion.json',{}).get('results',[])
-    if abl:
-        table(['Horizonte','AP sin ratios','AP con ratios','Delta'],[[r['horizon'],f'{r["without_ap"]:.4f}',
-              f'{r["with_ap"]:.4f}',f'{r["delta"]:.4f}'] for r in abl],[100,125,125,135])
-    p('Explicabilidad prevista: coeficientes estandarizados en logística; árboles/ensembles y '
-      'MLP se inspeccionan con importancia por permutación en una muestra de train. Es descriptiva, '
-      'no causal ni una medición independiente de generalización. El costo se compara por segundos de ajuste e inferencia '
-      'en el mismo entorno; no se extrapola a costos monetarios ni latencias productivas.')
-    next_page()
-
+    if default:
+        table(['h / modelo','Train AP','CV AP ± SD','Brecha','LR','Ajuste s'],[
+            [f'{r["horizon"]} / {names[r["name"]]}',f(r['train_ap']),
+             f'{f(r["cv_ap_mean"])} ± {f(r["cv_ap_std"])}',f(r['gap']),r['learning_rate'],f(r['fit_seconds'],1)]
+             for r in default],[110,65,110,60,60,85])
+        fig,ax=plt.subplots(figsize=(8,2.9))
+        for h,offset in [(3,0)]:
+            rows=[r for r in default if r['horizon']==h]
+            ax.errorbar(np.arange(len(rows))+offset,[r['cv_ap_mean'] for r in rows],
+                yerr=[r['cv_ap_std'] for r in rows],fmt='o',capsize=3,label=f't+{h}')
+        ax.set_xticks(range(len(rows)),[names[r['name']] for r in rows],rotation=15,ha='right',fontsize=8)
+        ax.set(ylabel='AP de CV ± SD');ax.legend();fig.tight_layout()
+        fig.savefig(EVIDENCE/'comparacion_modelos.png',dpi=150);plt.close(fig)
+        picture(EVIDENCE/'comparacion_modelos.png',160)
+        failure=[f't+{r["horizon"]} {names[r["name"]]}' for r in default if r.get('beats_both_baselines') is False]
+        p('No superan ambas bases por AP de CV: '+(', '.join(failure) if failure else 'ninguno')+'.')
+        largest=max([r for r in default if r['phase']=='candidato'],key=lambda r:r['gap'])
+        p(f'Mayor brecha observada: t+{largest["horizon"]} {names[largest["name"]]}, '
+          f'train {f(largest["train_ap"])} frente a CV {f(largest["cv_ap_mean"])} '
+          f'(brecha {f(largest["gap"])}), compatible con sobreajuste. La validación temporal '
+          'y la dispersión entre folds determinan selección, no el ajuste aparente de train.')
+        p('Ajuste s suma entrenamiento en folds y refit final; se registra también tiempo transcurrido '
+          'con scoring. LR=NA si no aplica. Advertencias de convergencia se conservan en los artefactos; '
+          'un default que no converge sigue siendo evidencia del experimento por defecto.',True)
+    else:p('Fase de candidatos aún no completada.')
+    page()
     title('6. Tuning')
-    p('Los tres mejores defaults por AP media de CV se ajustan en cada horizonte. '
-      'ParameterSampler usa búsqueda aleatoria reproducible con 30 configuraciones por familia y '
-      'los mismos folds. Se prefiere a grilla porque cubre rangos continuos con presupuesto fijo; '
-      'la evaluación explícita permite guardar cada configuración como nested run con su pipeline.')
-    table(['Familia','Espacio / justificación'],[
-      ['Logística','C log-uniforme 1e-4..1e3; class_weight None/balanced; max_iter 500/1000.'],
-      ['Random forest','80..400 árboles; profundidad None/6/12/20; hojas 1..30; max_features sqrt/.3/.7; ponderación.'],
-      ['Hist boosting','LR log .01.. .3; iteraciones 80..300; hojas 7..63; L2 log 1e-4..10; min hoja 10..60.'],
-      ['MLP','(32),(64),(100),(64,32); alpha log 1e-6.. .1; LR log 1e-4..1e-2; 200/400 iter.; early stopping sí/no.'],
-      ['GaussianNB','var_smoothing log-uniforme 1e-12..1e-3: escala de regularización de varianzas.']],[125,360])
-    p('Escalas logarítmicas exploran órdenes de magnitud de regularización/LR. Rangos enteros '
-      'acotan complejidad y costo. Se registra el espacio realmente utilizado de los tres finalistas. '
-      'Una mejora menor o igual a la mayor SD del default y del ajustado no se considera demostrada; '
-      'en ese caso se conserva el default para la selección.')
+    p('Se seleccionan los tres mejores defaults de t+3 por AP media de CV. Búsqueda '
+      'aleatoria reproducible (ParameterSampler, semilla 42), 30 configuraciones por familia y los '
+      'mismos folds. Permite explorar órdenes de magnitud con presupuesto fijo y registrar cada '
+      'configuración como nested run con su modelo completo.')
+    search={
+        'logistica':'C log 1e-4..1e3; class_weight None/balanced; max_iter 500/1000.',
+        'random_forest':'80..400 árboles; profundidad None/6/12/20; min hoja 1..30; max_features sqrt/.3/.7; ponderación None/balanced.',
+        'hist_boosting':'LR log .01.. .3; 80..300 iter.; 7..63 hojas; L2 log 1e-4..10; min hoja 10..60.',
+        'mlp':'(32),(64),(100),(64,32); alpha log 1e-6.. .1; LR log 1e-4..1e-2; 200/400 iter.; early stopping sí/no.',
+        'gaussian_nb':'var_smoothing log 1e-12..1e-3.'}
+    active=sorted({r['name'] for r in tuned})
+    if active:table(['Familia ajustada','Espacio evaluado'],[[names[n],search[n]] for n in active],[120,370])
+    p('LR y regularización usan escala logarítmica; complejidad y número de iteraciones tienen '
+      'rangos acotados para controlar costo. Si delta AP no supera la mayor SD de default y '
+      'ajustado, no se presenta como mejora demostrada y se conserva default para la selección.')
     if tuned:
-        table(['h / familia','AP default','AP tuning','Delta / >SD'],[
-          [f'{r["horizon"]}/{r["name"]}',f'{r["cv_ap_mean"]-r["improvement"]:.3f}',f'{r["cv_ap_mean"]:.3f}',
-           f'{r["improvement"]:.3f} / {r["improvement_exceeds_std"]}'] for r in tuned],[145,100,100,140])
-        trials_path=EVIDENCE /'tuning_trials.csv'
-        if trials_path.exists():
-            trial=pd.read_csv(trials_path)
-            fig,ax=plt.subplots(figsize=(8,2.6))
-            for (h,n),g in trial.groupby(['horizon','name']):
-                ax.plot(range(1,len(g)+1),g.cv_ap_mean.cummax(),label=f't{h}-{n}')
-            ax.set(xlabel='Configuraciones',ylabel='Mejor AP acumulada'); ax.legend(fontsize=6,ncol=3)
-            fig.tight_layout(); fig.savefig(EVIDENCE /'tuning.png',dpi=160); plt.close(fig)
-            image(EVIDENCE /'tuning.png',height=145)
-    else:
-        p('<b>Tuning no ejecutado.</b> No existen aún 180 corridas hijas, mejoras medidas ni gráficas de búsqueda. '
-          'El código exige n_iter>=30 y guarda las configuraciones evaluadas individualmente.')
-    p('Ganador y segundo pertenecen a familias distintas y se eligen antes de test. Se compara la '
-      'diferencia de AP media con la mayor SD entre pliegues; esta regla descriptiva no es una prueba '
-      'formal de significancia. Si la diferencia es pequeña, se declara incertidumbre. No se reajusta '
-      'el ranking tras observar el hold-out.')
-    next_page()
-
+        table(['h / familia','Configuraciones','AP default','AP ajustada ± SD','Delta / >SD'],[
+            [f'{r["horizon"]} / {names[r["name"]]}','30',f(r['cv_ap_mean']-r['improvement']),
+             f'{f(r["cv_ap_mean"])} ± {f(r["cv_ap_std"])}',f'{f(r["improvement"])} / {r["improvement_exceeds_std"]}'] for r in tuned],[115,70,85,120,100])
+    trials_path=EVIDENCE/'tuning_trials.csv'
+    if trials_path.exists():
+        trials=pd.read_csv(trials_path)
+        fig,ax=plt.subplots(figsize=(8,2.8))
+        for (h,n),g in trials.groupby(['horizon','name']):
+            ax.plot(range(1,len(g)+1),g.cv_ap_mean.cummax(),label=f't+{h} {names[n]}')
+        ax.set(xlabel='Configuraciones',ylabel='Mejor AP acumulada');ax.legend(fontsize=6,ncol=2)
+        fig.tight_layout();fig.savefig(EVIDENCE/'tuning.png',dpi=150);plt.close(fig)
+        picture(EVIDENCE/'tuning.png',180)
+    if not tuned:p('Tuning aún no completado; no se declaran mejoras sin medir.')
+    p('Se compara ganador y segundo de familias distintas. Diferencia mayor a la SD es una '
+      'regla descriptiva, no prueba formal de significancia. El uso de los mismos folds para tuning '
+      'y selección puede ser optimista; test permanece independiente.',True)
+    page()
     title('7. Decisión')
-    p('Reducción FN = (FN_estacional - FN_modelo)/FN_estacional; '
-      'si el denominador es cero, se informa indefinida. Umbral inicial .70 del PSet 1 reemplazado '
-      f'por minimización OOF de {COST_FN:g}FN+{COST_FP:g}FP, sujeto a precision>={MIN_PRECISION:.2f}. '
-      'Estos son costos relativos asumidos y precision mínima provisional, no costos validados con ECU 911. '
-      'Si la restricción es inviable se declara. Umbral y finalistas se congelan antes de abrir test.')
     if selected:
-        table(['h / alias','Modelo / versión','AP test','Recall','Red. FN'],[
-          [f'{r["horizon"]}/{r["alias"]}',f'{r["name"]} / v{r["version"]}',f'{r["ap"]:.3f}',f'{r["recall"]:.3f}',
-           'indef.' if r['fn_reduction'] is None else f'{r["fn_reduction"]:.1%}'] for r in selected],
-          [110,150,70,70,85])
+        table(['h / alias','Familia','AP CV ± SD','AP test','Recall','Red. FN'],[
+            [f'{r["horizon"]}/{r["alias"]}',names[r['name']],f'{f(r["cv_ap_mean"])} ± {f(r["cv_ap_std"])}',
+             f(r['ap']),f(r['recall']),pct(r['fn_reduction'])] for r in selected],[90,85,105,65,60,85])
+        for h in HORIZONS:
+            winner=next(r for r in selected if r['horizon']==h and r['alias']=='champion')
+            runner=next(r for r in selected if r['horizon']==h and r['alias']=='challenger')
+            p(f't+{h}: {names[winner["name"]]} se eligió por AP media de CV; diferencia '
+              f'{f(winner["cv_difference"])} frente a SD máxima {f(max(winner["cv_ap_std"],runner["cv_ap_std"]))}. '
+              f'¿Supera variación entre folds? {winner["cv_difference_exceeds_sd"]}. '
+              f'Reducción FN={pct(winner["fn_reduction"])}; '
+              +('cumple meta del 10%.' if winner['fn_reduction'] is not None and winner['fn_reduction']>=.1 else 'no demuestra cumplir la meta del 10%.'))
+        table(['h / alias','Run final / versión Registry','Umbral / precisión / costo* / ms-fila'],[
+            [f'{r["horizon"]}/{r["alias"]}',f'{r["run_id"]} / v{r["version"]}',
+             f'{f(r["threshold"])} / {f(r["precision"])} / {f(r["cost_per_1000"],1)} / {f(r["inference_ms_per_row"],4)}'] for r in selected],[90,240,160])
+        p('*Costo relativo por 1.000 cantón-días; supuestos 5FN+FP. Finalistas y umbrales '
+          'se congelaron en CV/OOF antes de abrir test. Test no modifica ranking, hiperparámetros '
+          'ni umbral. Se mide inferencia en el mismo entorno; no son costos monetarios.',True)
         for r in selected:
-            p(f't+{r["horizon"]} {r["alias"]}: run_id={r["run_id"]}; '
-              f'models:/{r["registry_name"]}@{r["alias"]}; '
-              f'inferencia={r["inference_ms_per_row"]:.4f} ms/fila.',small=True)
-            if r.get('important_features_train'):
-                p('Variables de mayor importancia descriptiva en train: '+', '.join(r['important_features_train'])+'.',small=True)
-    else:
-        p('<b>No hay ganador ni versiones registradas reales.</b> Falta extraer la OBT, ejecutar '
-          'experimentos y evaluar ambos finalistas una sola vez. No se afirma cumplir la meta del 10%.')
-    p('Se usa un registro por horizonte: ecu911-alta-demanda-t3-modelo y '
-      'ecu911-alta-demanda-t7-modelo; ambos con aliases champion y challenger. El notebook 05 '
-      'carga por alias en kernel limpio y exige igualdad exacta de predicciones, AP local y AP '
-      'registrada. Esta reproducción verifica el mismo resultado; no vuelve a seleccionar el modelo.')
+            if r['alias']=='champion':
+                p(f't+{r["horizon"]}, importancia por permutación en train: '+', '.join(r.get('important_features_train',[])[:3])+'. '
+                  'Es descriptiva y no causal; logística añade coeficientes, modelos complejos requieren inspección.',True)
+        p('Registry: ecu911-alta-demanda-t3-modelo, aliases '
+          'champion/challenger. Notebook 05 carga por alias en kernel nuevo y exige predicciones '
+          'idénticas y AP igual al run final. '+f'Reproducciones exactas verificadas: {len(verified)}/2.',True)
+    else:p('Selección y evaluación final aún pendientes.')
+    if selected:
+        fig,ax=plt.subplots(figsize=(6,2.1))
+        group=[r for r in selected if r['horizon']==3]
+        baseline=group[0]['business_baseline']['fn']
+        ax.bar(['Estacional','Champion','Challenger'],[baseline]+[r['fn'] for r in group],color=['#6b8294','#167d9a','#ad7a43'])
+        ax.set(title='t+3',ylabel='Días altos no anticipados')
+        ax.tick_params(axis='x',labelsize=7)
+        fig.tight_layout();fig.savefig(EVIDENCE/'decision_fn.png',dpi=150);plt.close(fig)
+        picture(EVIDENCE/'decision_fn.png',110)
     title('8. Limitaciones')
-    p('(1) Latencia mensual: no hay prueba de inferencia operacional diaria. '
-      '(2) Enero de 2024 se conserva como anomalía documentada; no se usa su marca retrospectiva '
-      'como predictor. (3) P90 congelado limita adaptación a drift y puede alterar prevalencia futura. '
-      '(4) Sin población INEC, personal disponible ni ID de incidente no se infiere saturación ni '
-      'exactitud factual de los registros. (5) Geografía vigente del PSet 2 contiene reasignaciones '
-      'retrospectivas. (6) Tuning y selección sobre los mismos folds tienen optimismo de selección; '
-      'el hold-out final ofrece contraste independiente. (7) La métrica por estrato depende del '
-      'volumen del año de calibración. (8) LLM en muestra limitada y costos asumidos exigen validación adicional.')
-    p('<b>Pendientes de entrega:</b> '+('revisar captura, prueba LLM y auditoría final de completitud.' if ready else
-      'credenciales Snowflake válidas, snapshot real, EDA empírica, 198 corridas evaluadas, prueba LLM, '
-      'captura MLflow, registro, exportación de corridas y notebooks con resultados reales.'))
-    p('Fuentes: memo PSet 1 entregado por el equipo; instrucciones CD_PSet_3.pdf; '
-      'https://github.com/junilai/Pset_2; documentación oficial de scikit-learn (TimeSeriesSplit, '
-      'Average Precision) y MLflow (tracking server, sklearn log_model, Model Registry).',small=True)
-
+    p('La fuente pública mensual no satisface la disponibilidad diaria asumida; esta es evaluación '
+      'retrospectiva condicionada a datos oportunos. Enero 2024 se conserva con anomalía sin causa '
+      'confirmada; no se usa su marca como predictor. P90 congelado puede perder vigencia y la '
+      'prevalencia cambia. Geografía del PSet 2 contiene correcciones retrospectivas. Sin población '
+      'INEC, capacidad operativa ni ID de incidente no se concluye saturación, exactitud factual '
+      'o reducción de tiempos de respuesta. Costos y precisión mínima son supuestos; requieren '
+      'validación institucional. Tuning/selección comparten folds; Qwen se evalúa en una muestra '
+      'pequeña y temperatura cero no garantiza estabilidad entre versiones.')
+    p('Fuentes: CD_PSet_3.pdf; memo PSet 1; github.com/junilai/Pset_2 '
+      '(cc4df2dc56d9f17691956ba9c325245726eeba9b); documentación oficial de sklearn y MLflow.',True)
     def footer(canvas,doc):
-        canvas.setStrokeColor(colors.HexColor('#167d9a')); canvas.line(42,805,553,805)
-        canvas.setFont('Helvetica',7); canvas.setFillColor(colors.HexColor('#426070'))
-        canvas.drawString(42,815,'ECU 911 · PSET 3 · Tierra / Rodríguez / Rodríguez / Cadena / Jarrín')
+        canvas.setStrokeColor(colors.HexColor('#167d9a'));canvas.line(42,805,553,805)
+        canvas.setFont('Helvetica',7);canvas.drawString(42,815,'ECU 911 · PSet 3 · Experimentación con evidencia')
         canvas.drawRightString(553,24,str(doc.page))
-    path=DOCS / NAME
-    SimpleDocTemplate(str(path),pagesize=A4,rightMargin=42,leftMargin=42,topMargin=48,bottomMargin=40).build(
-        story,onFirstPage=footer,onLaterPages=footer)
-    (EVIDENCE /'memo.md').write_text('\n\n'.join(md),encoding='utf-8')
-    state={'real_snapshot':bool(snapshot) and not synthetic,'real_results':ready,
-           'candidate_runs':len(candidates),'tuned_families':len(tuned),'final_runs':len(selected),
-           'registry_verified':(EVIDENCE /'verificacion_registry.json').exists(),
-           'mlflow_screenshot':(EVIDENCE /'mlflow_comparacion.png').exists(),
-           'llm_executed':isinstance(llm,list),'ready_to_submit':ready and isinstance(llm,list)
-               and (EVIDENCE /'verificacion_registry.json').exists() and (EVIDENCE /'mlflow_comparacion.png').exists(),
-           'memo':NAME}
-    (EVIDENCE /'estado_entrega.json').write_text(json.dumps(state,indent=2))
+    SimpleDocTemplate(str(DOCS/NAME),pagesize=A4,rightMargin=42,leftMargin=42,topMargin=48,bottomMargin=40).build(story,onFirstPage=footer,onLaterPages=footer)
+    (EVIDENCE/'memo.md').write_text('\n\n'.join(md))
+    state={'real_snapshot':real,'real_results':len(selected)==2,'baseline_runs':sum(r['phase']=='baseline' for r in default),'candidate_runs':sum(r['phase']=='candidato' for r in default),
+           'tuned_families':len(tuned),'final_runs':len(selected),'registry_verified':len(verified)==2,
+           'mlflow_screenshot':(EVIDENCE/'mlflow_comparacion.png').exists(),'llm_executed':isinstance(llm,list),
+           'ready_to_submit':complete and (EVIDENCE/'mlflow_comparacion.png').exists(),'memo':NAME}
+    dump(EVIDENCE/'estado_entrega.json',state)
     return state
+
 
 # RUN
 import argparse
@@ -1124,7 +1203,7 @@ def capture_mlflow():
     exp=mlflow.get_experiment_by_name(PROJECT)
     if exp is None:
         raise RuntimeError('Ejecutar primero los experimentos.')
-    runs=mlflow.search_runs([exp.experiment_id],filter_string="tags.fase = 'candidato'",max_results=5)
+    runs=mlflow.search_runs([exp.experiment_id],filter_string="tags.fase = 'candidato' and tags.horizonte = '3'",max_results=5)
     if len(runs)<2:
         raise RuntimeError('Faltan al menos dos candidatos reales para comparar.')
     query=urlencode({'runs':json.dumps(runs.run_id.tolist()),'experiments':json.dumps([exp.experiment_id])})
@@ -1135,6 +1214,15 @@ def capture_mlflow():
         page.goto(url,wait_until='domcontentloaded',timeout=30000)
         page.get_by_text('Parameters',exact=True).first.wait_for(timeout=30000)
         page.get_by_text(runs.iloc[0]['tags.mlflow.runName'],exact=False).first.wait_for(timeout=30000)
+        close=page.get_by_role('button',name='Close',exact=True)
+        if close.count():
+            close.click()
+        page.get_by_role('button',name='Clear All',exact=True).click()
+        page.get_by_role('combobox').nth(1).click(force=True)
+        page.locator('[class*="select-item-option-content"]').filter(has_text='cv_ap_mean').first.click()
+        page.get_by_role('combobox').nth(1).click(force=True)
+        page.locator('[class*="select-item-option-content"]').filter(has_text='train_ap').first.click()
+        page.get_by_text(f'Comparing {len(runs)} Runs from 1 Experiment',exact=True).click()
         page.screenshot(path=str(EVIDENCE/'mlflow_comparacion.png'),full_page=True)
         browser.close()
     return {'url':url,'captura':str(EVIDENCE/'mlflow_comparacion.png')}
@@ -1150,7 +1238,11 @@ def execute(stage):
         return build_report()
     c=context()
     if stage=='eda':
-        return run_eda(c['cal'],c['train'],c['p90'])
+        result=run_eda(c['cal'],c['train'],c['p90'])
+        full,_=load_snapshot()
+        pd.DataFrame({'dtype':full.dtypes.astype(str),'nulls':full.isna().sum(),
+                      'missing_fraction':full.isna().mean()}).to_csv(EVIDENCE/'eda/snapshot_schema.csv')
+        return result
     if stage=='candidatos':
         return candidates(c)
     if stage=='tuning':
@@ -1158,7 +1250,26 @@ def execute(stage):
     if stage=='ablacion':
         return ablation(c)
     if stage=='llm':
-        return llm_trial(c)
+        result=llm_trial(c)
+        if isinstance(result,list) and LLM_BASE_URL.startswith(('http://127.0.0.1:11434','http://localhost:11434')):
+            metadata_path=EVIDENCE/'ollama_metadata.json'
+            metadata=read_json(metadata_path,{})
+            try:
+                base=LLM_BASE_URL.removesuffix('/v1')
+                tags=requests.get(base+'/api/tags',timeout=5).json()['models']
+                selected_model=next(m for m in tags if m['name']==LLM_MODEL)
+                version=requests.get(base+'/api/version',timeout=5).json().get('version','unknown')
+                metadata={'model':LLM_MODEL,'model_digest':selected_model['digest'],'ollama_version':version}
+                dump(metadata_path,metadata)
+            except (requests.RequestException,KeyError,ValueError,StopIteration):
+                pass
+            if metadata.get('model')==LLM_MODEL:
+                client=mlflow.MlflowClient()
+                for row in result:
+                    client.log_param(row['run_id'],'ollama_model_digest',metadata['model_digest'])
+                    client.log_param(row['run_id'],'ollama_version',metadata['ollama_version'])
+                export_runs(c)
+        return result
     if stage=='seleccion':
         return final(c)
     if stage=='verificar':

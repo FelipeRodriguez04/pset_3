@@ -4,12 +4,18 @@ Tierra · Rodríguez · Rodríguez · Cadena · Jarrín
 
 Continuación del [PSet 2](https://github.com/junilai/Pset_2), commit
 `cc4df2dc56d9f17691956ba9c325245726eeba9b`, y de la propuesta del PSet 1:
-clasificación de alta demanda cantonal a t+3 y t+7.
+clasificación de alta demanda cantonal exclusivamente a **t+3**. El alcance
+del PSet 3 se limita a ese horizonte por decisión del equipo.
 
-**Estado:** faltan credenciales Snowflake válidas y experimentos con la OBT
-real. El PDF es un borrador; los notebooks guardan mensajes de pendiente.
-`docs/corridas.csv` es una exportación real del experimento de entrega,
-actualmente vacío. Las pruebas sintéticas no son resultados del ECU 911.
+**Estado:** el login y la extracción de Snowflake ya se comprobaron y existen
+corridas previas. Esta versión del código se ha adaptado a t+3 **sin ejecutarla**.
+Los notebooks tienen sus salidas anteriores limpiadas. El PDF y
+`docs/corridas.csv` conservan el historial de la ejecución anterior y todavía
+no se han regenerado para el alcance nuevo.
+
+La búsqueda prevista es **3 familias × 30 configuraciones = 90 configuraciones
+de tuning**, únicamente para t+3. Las corridas compatibles de t+3 ya terminadas
+pueden reutilizarse al reanudar; las de otros horizontes se excluyen del flujo.
 
 ## Estructura del enunciado
 
@@ -39,7 +45,8 @@ pset_3/
 tracking y generación del documento. `src/pipeline.py` contiene features,
 `Pipeline` y `ColumnTransformer`. Los notebooks importan estas funciones.
 Los snapshots, estados, figuras y modelos intermedios se guardan fuera del
-repositorio, en `~/.cache/pset_3/`, configurable mediante `PSET3_DATA_DIR`.
+repositorio, en `~/.cache/pset_3/`, configurable mediante `PSET3_DATA_DIR`. Los nuevos
+intermedios de presentación se guardan en `~/.cache/pset_3/evidencia_t3/`.
 Las figuras y tablas se incorporan al PDF; los artefactos MLflow persisten
 además en volúmenes Docker. No se generan archivos adicionales de entrega.
 
@@ -76,12 +83,13 @@ usar `SNOWFLAKE_AUTHENTICATOR=externalbrowser` cuando corresponda.
 python -m src.datos snapshot
 ```
 
-Se consulta `ECU911.OBT.OBT_EMERGENCIAS_CANTON_DIA` hasta
+Se consulta `ECU911Final.OBT.OBT_EMERGENCIAS_CANTON_DIA` hasta
 `SNAPSHOT_END=2026-09-30`. El snapshot guarda tabla, corte, query ID,
 conteos y SHA256. Comprueba grain, cobertura diaria, lags, medias y targets.
 No sobrescribe snapshots, modifica tablas remotas ni imputa objetivos finales.
-El PSet 2 documenta 422.912 filas y 37 columnas: son antecedentes, no conteos
-revalidados en este experimento pendiente.
+El snapshot real obtenido tiene 429.632 filas y 37 columnas. La OBT puede
+conservar columnas de otros horizontes; el modelado las excluye y construye
+únicamente la etiqueta `obj_n_emergencias_t3 > P90`.
 
 ## Orden de ejecución de los notebooks
 
@@ -94,9 +102,9 @@ guardando las salidas, en este orden:
    preparación importada de `src/pipeline.py`.
 3. `03_baseline_candidatos.ipynb`: dos baselines primero, cinco familias
    por defecto, ablación y prueba LLM mediante prompting.
-4. `04_tuning.ipynb`: tres mejores familias por horizonte, con 30
+4. `04_tuning.ipynb`: tres mejores familias para t+3, con 30
    configuraciones por familia y nested runs.
-5. `05_seleccion.ipynb`: dos finalistas por horizonte, test final,
+5. `05_seleccion.ipynb`: dos finalistas de t+3, test final,
    Registry, reproducción exacta por alias y exportación de corridas.
 
 Alternativa con un kernel nuevo por notebook:
@@ -115,7 +123,10 @@ El primer año de train calibra el P90 por cantón y weekday, congelado antes
 de todos los folds y separado del ajuste de clasificadores. El 20% final de
 fechas es hold-out. Tres folds expansivos sobre fechas únicas con gap de siete
 días mantienen juntos todos los cantones del mismo día y evitan que las
-etiquetas futuras de train alcancen la validación.
+etiquetas futuras de train alcancen la validación. Se conserva gap=7 como
+separación conservadora para t+3 y para mantener los pliegues y el entrenamiento
+de las corridas ya realizadas. El hold-out solo exige ahora que y_t3 esté
+observado; sus últimas tres fechas sin etiqueta se excluyen.
 
 Métrica técnica: Average Precision (AP, PR-AUC no interpolada). Métrica de
 negocio: `(FN_estacional − FN_modelo) / FN_estacional`, con meta del 10%
@@ -132,9 +143,13 @@ que no supera la mayor SD de default/ajustado no se considera demostrada.
 Los dos finalistas se fijan en CV antes de abrir test; este no cambia ganador
 ni umbral.
 
-Ambos horizontes requieren 4 baselines, 10 candidatos, 180 tuning y 4 finales:
-198 corridas evaluadas, además de padres y ablaciones. El entrenamiento completo
-puede tardar horas en CPU. Se pueden ejecutar fases desde terminal:
+Para t+3 se preparan **2 baselines, 5 candidatos y 90 configuraciones de tuning**.
+El PDF establece un mínimo de 90 configuraciones (3 modelos × 30). Aquí se
+registra una corrida final por cada finalista: 2 finales, para un total de 99
+corridas evaluadas, más 3 padres de tuning, 1 ablación y 1 prueba LLM. Registrar
+ambos finalistas por separado no duplica la búsqueda. El entrenamiento completo
+puede tardar horas en CPU. Cuando se decida reanudar, se pueden ejecutar fases
+desde terminal:
 
 ```bash
 python -m src.datos eda
@@ -146,9 +161,17 @@ python -m src.datos seleccion
 python -m src.datos verificar
 ```
 
-Los estados completados se leen de caché sin repetir selección. Cambiar código
-o snapshot exige un experimento y directorio de caché nuevos. Versionar el
-código con un commit antes de las corridas reales.
+Los estados completados se leen de caché sin repetir selección. La transición
+a t+3 incluye compatibilidad explícita con los checkpoints anteriores de ese
+horizonte: se comprueban snapshot, split, contexto y una huella del código que
+determina el entrenamiento. Al reanudar tuning se reabre el padre original
+por familia y se omiten sus configuraciones terminadas. Las corridas históricas
+se conservan con su procedencia original; no se convierten registros t+7 en t+3.
+
+Los cambios científicos posteriores invalidan esa compatibilidad y requieren
+un protocolo/directorio nuevo; el código bloquea la reutilización silenciosa.
+Se conservan los rangos de búsqueda existentes. Versionar el código antes de
+reanudar. No se ha probado esta adaptación ejecutando entrenamientos.
 
 ## LLM, Registry y documento
 
@@ -164,11 +187,11 @@ LLM_MAX_ROWS=100
 
 La prueba zero-shot usa una muestra
 del último fold, sin etiquetas futuras, nombres geográficos ni fechas exactas.
-Se compara contra OOF de las mismas filas. Son 100 filas por horizonte;
+Se compara contra OOF de las mismas filas. Son 100 filas de validación de t+3;
 la evaluación requiere primero el snapshot real y las corridas de candidatos.
 
-Los registros `ecu911-alta-demanda-t3-modelo` y
-`ecu911-alta-demanda-t7-modelo` contienen aliases `champion` y `challenger`.
+El registro `ecu911-alta-demanda-t3-modelo` contendrá los aliases
+`champion` y `challenger` de los dos finalistas de t+3.
 El notebook final carga por alias y exige igualdad exacta de predicciones
 y AP respecto de MLflow.
 
@@ -193,5 +216,7 @@ No hay población INEC ni capacidad operativa integradas; la geografía incluye
 reasignaciones retrospectivas y el P90 congelado puede perder vigencia.
 No se afirma reducir tiempos de respuesta ni costos monetarios.
 
-Faltan credenciales, snapshot, resultados empíricos, prompting ejecutado y
-modelos reales registrados. El PDF conserva la marca de borrador.
+Falta completar el tuning de t+3, la evaluación final y el registro de los
+finalistas, y volver a guardar las salidas de los notebooks y regenerar PDF/CSV.
+Las credenciales, el snapshot y las corridas históricas se conservan. Nada se
+reanuda automáticamente por editar estos archivos.
