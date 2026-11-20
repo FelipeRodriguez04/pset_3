@@ -1,0 +1,11 @@
+.env
+.venv/
+.mlflow/
+mlartifacts/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+cache/
+data/
+docs/memo_render/
+tmp/

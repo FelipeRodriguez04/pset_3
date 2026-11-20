@@ -1,0 +1,52 @@
+{
+  "champion": "hist_gradient_boosting",
+  "challenger": "catboost",
+  "champion_run_id": "b94b74256a114988b926217055c66134",
+  "challenger_run_id": "07a10eaa99a74a6dafc8b8b4800b0f26",
+  "champion_version": 3,
+  "challenger_version": 4,
+  "model_registry_name": "ecu911-alta-demanda-modelo",
+  "champion_threshold": 0.35,
+  "champion_test_pr_auc": 0.26925052381184034,
+  "champion_test_accuracy": 0.8274305555555556,
+  "champion_cv_pr_auc_ponderado": 0.2315549938988667,
+  "champion_reproduced_pr_auc": 0.26925052381184034,
+  "business_missed_peak_reduction": 0.3626501356063542,
+  "seasonal_baseline_test": {
+    "accuracy": 0.8422123015873015,
+    "pr_auc": 0.12085130152491766,
+    "precision": 0.13813540004558925,
+    "recall": 0.19014747411358646,
+    "false_positives": 3781,
+    "false_negatives": 2581,
+    "true_positives": 606,
+    "true_negatives": 33352,
+    "weighted_error_cost": 42496.0,
+    "alert_rate": 0.1088045634920635
+  },
+  "validation_design": {
+    "folds": 4,
+    "block": "semestres_completos",
+    "purge_days": 3,
+    "seasonal_weighting": "x2 ventana feriado; x2.5 fin de año",
+    "selection_metric": "cv_pr_auc_ponderado_mean"
+  },
+  "t7": {
+    "model": "hist_gradient_boosting",
+    "run_id": "a2b12bfdc96d47dbb9bf12989a543e6a",
+    "registry_name": "ecu911-alta-demanda-t7-modelo",
+    "version": 2,
+    "threshold": 0.45,
+    "accuracy": 0.8885196834415584,
+    "pr_auc": 0.2634263709540544,
+    "precision": 0.3082752349196726,
+    "recall": 0.32492012779552715,
+    "false_positives": 2282,
+    "false_negatives": 2113,
+    "true_positives": 1017,
+    "true_negatives": 34012,
+    "weighted_error_cost": 33977.0,
+    "alert_rate": 0.08367999188311688
+  },
+  "total_mlflow_runs": 105
+}

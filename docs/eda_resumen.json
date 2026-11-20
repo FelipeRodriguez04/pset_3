@@ -1,0 +1,53 @@
+{
+  "dataset": {
+    "source": "C:\\Universidad\\Data_Science\\Data_science_end_to_end\\laboratorios\\semana-09-sesion-01\\data\\obt_emergencias_canton_dia.csv",
+    "snapshot_end": "2026-09-30",
+    "dataset_hash": "4f2c2c024d1eb5eb2d9a7ee37ffd8a32a781448043aa13278006c3f323e8137a",
+    "rows": 429632,
+    "columns": 37
+  },
+  "train_rows": 387968,
+  "test_rows": 40320,
+  "train_date_range": [
+    "2021-07-01",
+    "2026-03-28"
+  ],
+  "test_date_range": [
+    "2026-04-01",
+    "2026-09-27"
+  ],
+  "target_prevalence_train": 0.0816768393269548,
+  "target_prevalence_test": 0.07904265873015873,
+  "iqr_upper": 50.5,
+  "iqr_outliers": 49113,
+  "iqr_outliers_pct": 12.65903373474101,
+  "zscore_ge_3": 3612,
+  "zscore_ge_3_pct": 0.9310046189376444,
+  "strongest_spearman_with_target": {
+    "ratio_media_7_p90": 0.10597753009421541,
+    "ratio_estacional_p90": 0.06637462779319481,
+    "media_prev_7d": 0.06037362601076135
+  },
+  "findings": [
+    {
+      "hallazgo": "El target está desbalanceado",
+      "evidencia": "La clase positiva representa 8.17% del entrenamiento.",
+      "consecuencia": "Usar PR-AUC, ponderación de clases y un umbral basado en costo."
+    },
+    {
+      "hallazgo": "El volumen futuro tiene cola larga y valores atípicos reales",
+      "evidencia": "IQR detecta 12.66% y Z>=3 detecta 0.93%.",
+      "consecuencia": "No borrar picos; representan precisamente el evento de negocio."
+    },
+    {
+      "hallazgo": "El historial reciente y estacional contiene señal",
+      "evidencia": "Las mayores asociaciones de Spearman aparecen en lags y medias previas.",
+      "consecuencia": "Crear promedio del mismo día de semana, tendencia y volatilidad previa."
+    },
+    {
+      "hallazgo": "Feriados y temporadas cambian la tasa de alta demanda",
+      "evidencia": "La prevalencia se revisó por fin de año, Carnaval, Semana Santa y otros feriados.",
+      "consecuencia": "Agregar calendario objetivo, rezagos anuales y backtests estacionales completos."
+    }
+  ]
+}

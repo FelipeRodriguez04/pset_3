@@ -1,0 +1,23 @@
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.17.2
+    container_name: pset3-mlflow
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --serve-artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5050"
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./.mlflow:/mlflow
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 2.0
