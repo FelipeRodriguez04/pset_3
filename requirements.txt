@@ -1,0 +1,21 @@
+# Python 3.11 (uv venv --python 3.11 .venv)
+pandas==3.1.1
+numpy==2.4.6
+pyarrow==26.0.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+optuna==5.1.0
+mlflow==3.18.0
+snowflake-connector-python==5.2.0
+python-dotenv==1.2.4
+matplotlib==3.11.2
+seaborn==0.13.2
+scipy==1.17.1
+requests==2.34.2
+pytest==9.2.0
+jupyter==1.1.1
+nbconvert==7.17.2
+ipykernel==7.4.0
+timesfm[torch]==3.0.2
+torch==2.15.0
+huggingface-hub==2.4.0

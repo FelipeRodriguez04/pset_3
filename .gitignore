@@ -42,3 +42,15 @@ entregable/
 !/docs/PSet2_memo_Tierra_Rodriguez_Rodriguez_Cadena_Jarrin.pdf
 /docs/PSet2_memo_*.md
 /docs/PROGRESO.md
+
+# PSet 3
+CD_PSet_3.pdf
+mlruns/
+mlartifacts/
+.ipynb_checkpoints/
+.superpowers/
+.pytest_cache/
+/docs/PSet3_memo_*.tex
+/docs/PSet3_memo_*.aux
+/docs/PSet3_memo_*.log
+/docs/PSet3_memo_*.out
