@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: dim_canton
+    description: Cantones del Ecuador (geografía vigente). 1 fila = 1 código DPA de 4 dígitos.
+    columns:
+      - name: cod_canton
+        description: PK. Código DPA INEC (2 provincia + 2 cantón).
+        tests: [unique, not_null]
+      - name: canton
+        tests: [not_null]
+      - name: region
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Costa', 'Sierra', 'Amazonía', 'Insular', 'No delimitada']
+
+  - name: dim_fecha
+    description: Calendario 2021-2026 con feriados nacionales (seed feriados_ecuador) y mes anómalo.
+    columns:
+      - name: fecha
+        description: PK.
+        tests: [unique, not_null]
+      - name: dia_semana
+        tests:
+          - accepted_values:
+              values: [1, 2, 3, 4, 5, 6, 7]
+              quote: false
+
+  - name: fct_emergencias_canton_dia
+    description: >
+      Grain: 1 cantón x 1 día (incluye días con 0 emergencias).
+      Es la entrada de la OBT; el target y_h (P90 por cantón y día de semana) se calcula en ML.
+    columns:
+      - name: cod_canton
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_canton')
+              field: cod_canton
+      - name: fecha
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_fecha')
+              field: fecha
+      - name: n_emergencias
+        tests: [not_null]

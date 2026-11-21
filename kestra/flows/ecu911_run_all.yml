@@ -1,0 +1,89 @@
+id: run_all
+namespace: ecu911
+description: |
+  Ejecuta TODA la tubería de punta a punta con un solo clic:
+  1. snowflake_setup  -> warehouse, database, schemas, rol y usuario (idempotente)
+  2. ingest_month     -> un subflow por cada mes entre "desde" y "hasta" (BRONZE)
+  3. transform        -> dbt (SILVER/GOLD + tests) -> Spark (OBT) -> reconciliación
+  Todo es idempotente: se puede re-ejecutar sin duplicar datos.
+  Un mes no publicado queda en WARNING y no detiene a los demás.
+
+inputs:
+  - id: desde
+    type: STRING
+    defaults: "2021-07"
+    description: Primer mes a cargar (YYYY-MM). 2021-07 es el primero del portal.
+    validator: ^\d{4}-(0[1-9]|1[0-2])$
+  - id: hasta
+    type: STRING
+    required: false
+    description: Último mes a cargar (YYYY-MM). Vacío = mes anterior a hoy.
+    validator: ^\d{4}-(0[1-9]|1[0-2])$
+  - id: setup
+    type: BOOLEAN
+    defaults: true
+    description: Ejecutar snowflake_setup antes de cargar (false si ya existe la infraestructura)
+
+variables:
+  hasta: "{{ inputs.hasta ?? (execution.startDate | dateAdd(-1, 'MONTHS') | date('yyyy-MM')) }}"
+  # mediodía del día 1: evita que la zona horaria cambie el mes
+  fecha_desde: "{{ inputs.desde ~ '-01T12:00:00Z' }}"
+  fecha_hasta: "{{ render(vars.hasta) ~ '-01T12:00:00Z' }}"
+
+tasks:
+  # 0) Cuántos meses hay entre "desde" y "hasta" (año*12 + mes).
+  #    Año y mes salen con date('yyyy') / date('M'): "08" | number falla (lo lee como octal).
+  - id: rango
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      hasta: "{{ render(vars.hasta) }}"
+      n_meses: >-
+        {{ ((render(vars.fecha_hasta) | date('yyyy') | number) * 12 + (render(vars.fecha_hasta) | date('M') | number))
+         - ((render(vars.fecha_desde) | date('yyyy') | number) * 12 + (render(vars.fecha_desde) | date('M') | number)) + 1 }}
+
+  - id: fail_si_rango_invalido
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ (outputs.rango.values.n_meses | number) < 1 }}"
+    errorMessage: "Rango inválido: desde {{ inputs.desde }} es posterior a hasta {{ outputs.rango.values.hasta }}."
+
+  - id: log_plan
+    type: io.kestra.plugin.core.log.Log
+    message: "run_all: setup={{ inputs.setup }}, cargando {{ outputs.rango.values.n_meses }} meses ({{ inputs.desde }} -> {{ outputs.rango.values.hasta }}), luego transform."
+
+  # 1) Infraestructura de Snowflake
+  - id: si_setup
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.setup }}"
+    then:
+      - id: snowflake_setup
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: ecu911
+        flowId: snowflake_setup
+        wait: true
+        transmitFailed: true
+
+  # 2) Ingesta: un ingest_month por mes (ingest_month ya limita a 4 a la vez)
+  - id: each_month
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ range(0, (outputs.rango.values.n_meses | number) - 1) }}"
+    concurrencyLimit: 4
+    tasks:
+      - id: ingest_month
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: ecu911
+        flowId: ingest_month
+        inputs:
+          month: "{{ render(vars.fecha_desde) | dateAdd(taskrun.value | number, 'MONTHS') | date('yyyy-MM') }}"
+        wait: true
+        transmitFailed: true
+        inheritLabels: true
+        allowFailure: true      # un mes no publicado no detiene a los demás
+
+  # 3) dbt -> Spark -> reconciliación (una sola vez, al final)
+  - id: transform
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: ecu911
+    flowId: transform
+    wait: true
+    transmitFailed: true
+    inheritLabels: true

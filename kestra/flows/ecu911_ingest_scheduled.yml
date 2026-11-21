@@ -1,0 +1,63 @@
+id: ingest_scheduled
+namespace: ecu911
+description: |
+  Ingesta programada. El día 10 de cada mes carga los últimos N meses
+  (por defecto 2) llamando al subflow ingest_month para cada uno.
+  Se cargan 2 porque el portal publica con 1 a 8 semanas de retraso:
+  si un mes aún no está publicado queda en WARNING y el otro sigue.
+
+  Al terminar la carga lanza el flow transform (dbt -> Spark -> reconciliación).
+
+  BACKFILL: en la UI, Triggers > monthly > Backfill executions, desde
+  2021-08-10 hasta hoy, con los inputs meses = 1 (cada fecha pasada carga
+  solo su mes anterior) y transformar = false (evita 62 builds de dbt + Spark);
+  al final ejecutar transform una sola vez. Es seguro repetirlo: todo es idempotente.
+
+inputs:
+  - id: meses
+    type: INT
+    defaults: 2
+    description: Cuántos meses hacia atrás cargar desde la fecha de ejecución
+  - id: transformar
+    type: BOOLEAN
+    defaults: true
+    description: Ejecutar dbt + Spark al terminar (false durante un backfill)
+
+tasks:
+  - id: each_month
+    type: io.kestra.plugin.core.flow.ForEach
+    # Genera [1, 2, ...] y lo convierte en meses: fecha - 1 mes, fecha - 2 meses...
+    # En una ejecución programada o de backfill, la fecha es la del trigger;
+    # en una ejecución manual, la fecha de inicio de la ejecución.
+    values: "{{ range(1, inputs.meses) }}"
+    concurrencyLimit: 2
+    tasks:
+      - id: ingest_month
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: ecu911
+        flowId: ingest_month
+        inputs:
+          month: "{{ (trigger.date ?? execution.startDate) | dateAdd(0 - (taskrun.value | number), 'MONTHS') | date('yyyy-MM') }}"
+        wait: true
+        transmitFailed: true
+        inheritLabels: true     # el subflow hereda labels (ej. tipo=backfill) para filtrar en la UI
+        allowFailure: true      # un mes no publicado no detiene a los demás
+
+  - id: si_transformar
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.transformar }}"
+    then:
+      - id: transform
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: ecu911
+        flowId: transform
+        wait: true
+        transmitFailed: true
+        inheritLabels: true
+
+triggers:
+  - id: monthly
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 10 * *"          # día 10 de cada mes, 06:00
+    timezone: America/Guayaquil
+    recoverMissedSchedules: ALL # si Kestra estuvo apagado, ejecuta las fechas perdidas

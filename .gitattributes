@@ -1,0 +1,7 @@
+# Los scripts se ejecutan dentro de contenedores Linux: deben tener fin de línea LF.
+# Sin esto, Git en Windows puede convertirlos a CRLF y fallan con "sh\r: not found".
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.py   text eol=lf
+*.sql  text eol=lf

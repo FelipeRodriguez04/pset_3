@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Datos crudos cargados por Kestra (flow ingest_month). Todo VARCHAR, tal como llega del portal.
+    schema: BRONZE
+    tables:
+      - name: emergencias_raw
+        identifier: EMERGENCIAS_RAW
+        description: 1 fila = 1 registro del archivo mensual del ECU 911 + metadata de ingesta.
+        # dbt source freshness: el portal publica 1 vez al mes con 1-8 semanas de retraso
+        loaded_at_field: _CARGADO_EN
+        freshness:
+          warn_after: {count: 45, period: day}
+          error_after: {count: 75, period: day}
+        columns:
+          - name: FECHA
+            tests: [not_null]
+          - name: _PERIODO
+            description: Mes cargado (YYYY-MM); clave de la idempotencia de la ingesta.
+            tests: [not_null]

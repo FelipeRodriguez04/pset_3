@@ -1,0 +1,38 @@
+id: dbt_build
+namespace: ecu911
+description: |
+  Ejecuta dbt (BRONZE -> SILVER; luego GOLD) en un contenedor efímero.
+  El proyecto dbt vive en Git (carpeta dbt/) y kestra-init lo sube a los
+  "namespace files" de ecu911; esta tarea lo copia a su directorio de trabajo.
+  `dbt build` = run + test en orden de dependencias: si un test falla, los
+  modelos que dependen de ese modelo no se construyen.
+
+inputs:
+  - id: select
+    type: STRING
+    defaults: "*"
+    description: Selector de dbt ("*" = todo; ej. "silver" = solo la carpeta silver)
+
+tasks:
+  - id: dbt_build
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    containerImage: ecu911-dbt:1.9.0   # construida por docker compose para la arquitectura del equipo
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      pullPolicy: NEVER              # usa la imagen local; no intenta descargarla de un registry
+    namespaceFiles:
+      enabled: true
+      include:
+        - dbt/**
+    projectDir: dbt
+    env:
+      DBT_PROFILES_DIR: dbt
+      SNOWFLAKE_ACCOUNT: "{{ envs.snowflake_account }}"
+      SNOWFLAKE_USER: "{{ envs.snowflake_user }}"
+      SNOWFLAKE_PASSWORD: "{{ envs.snowflake_password }}"
+      SNOWFLAKE_ROLE: "{{ envs.snowflake_role }}"
+      SNOWFLAKE_WAREHOUSE: "{{ envs.snowflake_warehouse }}"
+      SNOWFLAKE_DATABASE: "{{ envs.snowflake_database }}"
+    commands:
+      - dbt source freshness
+      - dbt build --select "{{ inputs.select }}"

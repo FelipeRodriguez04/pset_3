@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: emergencias
+    description: >
+      Incidentes del ECU 911 limpios y tipados. Grain: 1 fila = 1 incidente (misma cantidad de filas que BRONZE).
+      Las repeticiones de atributos se CONSERVAN: sin ID de incidente no se puede confirmar si representan el mismo evento.
+    columns:
+      - name: incidente_id
+        description: Periodo + nº de fila del archivo. Si se repite, un mes se cargó dos veces.
+        tests: [unique, not_null]
+      - name: fecha
+        description: Fecha del incidente (texto d/m/yyyy o serial de Excel convertidos a DATE).
+        tests: [not_null]
+      - name: periodo
+        tests: [not_null]
+      - name: cod_canton
+        description: Código DPA de 4 dígitos (2 provincia + 2 cantón). Clave del cantón, NO el nombre.
+      - name: es_ubicacion_valida
+        description: false = sin provincia/cantón utilizable (se excluye del conteo cantón-día).
+        tests: [not_null]
+      - name: es_codigo_corregido
+        description: true = el código de parroquia de la fuente no coincidía con el cantón (ej. 090150 en Morona Santiago).
+      - name: es_canton_reasignado
+        description: true = fila movida a su cantón vigente (seed cantones_reasignados, ej. SEVILLA DON BOSCO).
+      - name: es_periodo_anomalo
+        description: true = mes con volumen anómalo (var periodos_anomalos).

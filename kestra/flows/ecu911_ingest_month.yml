@@ -1,0 +1,204 @@
+id: ingest_month
+namespace: ecu911
+description: |
+  Ingesta de UN mes de la base de emergencias ECU 911 a Snowflake BRONZE.
+  1. Busca en la API del portal (CKAN) la URL del archivo de ese mes.
+  2. Lo descarga (CSV o XLSX; si es XLSX lo convierte a CSV sin tocar valores).
+  3. Lo sube a un stage de Snowflake.
+  4. Borra las filas previas de ese mes y hace COPY INTO en una transacción
+     (idempotente: re-ejecutar el mismo mes no genera duplicados).
+
+# Máximo 4 meses cargando a la vez; el resto espera en cola (protege la RAM de Docker
+# y al portal, que rechaza conexiones si recibe muchas juntas).
+concurrency:
+  limit: 4
+  behavior: QUEUE
+
+inputs:
+  - id: month
+    type: STRING
+    defaults: "2026-08"
+    description: Mes a cargar en formato YYYY-MM
+    validator: ^\d{4}-(0[1-9]|1[0-2])$
+
+variables:
+  catalog_url: https://www.datosabiertos.gob.ec/api/3/action/package_show?id=base-de-emergencias
+  # Carpeta del stage única por ejecución: dos ejecuciones del mismo mes no se pisan
+  stage_path: "{{ inputs.month }}/{{ execution.id }}"
+  snowflake_url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+
+tasks:
+  # 0) Objetos de BRONZE que usa este flow (idempotente)
+  - id: prepare
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    transaction: false
+    connectionPooling: false
+    url: "{{ render(vars.snowflake_url) }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    retry:
+      type: constant
+      interval: PT30S
+      maxAttempts: 3
+    sql: |
+      CREATE STAGE IF NOT EXISTS BRONZE.ECU911_STAGE;
+
+      CREATE TABLE IF NOT EXISTS BRONZE.EMERGENCIAS_RAW (
+        -- 7 columnas originales, todas como texto (dato tal como llega)
+        FECHA           VARCHAR,
+        PROVINCIA       VARCHAR,
+        CANTON          VARCHAR,
+        COD_PARROQUIA   VARCHAR,
+        PARROQUIA       VARCHAR,
+        SERVICIO        VARCHAR,
+        SUBTIPO         VARCHAR,
+        -- metadata de ingesta
+        _PERIODO        VARCHAR,        -- mes cargado (YYYY-MM): clave de la idempotencia
+        _URL_ORIGEN     VARCHAR,        -- URL del portal de donde vino
+        _ARCHIVO_STAGE  VARCHAR,        -- archivo en el stage
+        _FILA_ARCHIVO   NUMBER,         -- nº de línea dentro del archivo
+        _CARGADO_EN     TIMESTAMP_LTZ,
+        _EJECUCION_KESTRA VARCHAR
+      );
+
+  # 1) Catálogo del portal: lista de los ~65 recursos del dataset
+  - id: catalog
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.catalog_url }}"
+    retry:
+      type: exponential
+      interval: PT30S
+      maxInterval: PT5M
+      maxAttempts: 4
+
+  # El nombre de cada recurso termina en YYYYMM (ej. "..._202608"), la URL no es predecible
+  - id: resolve_url
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      url: "{{ outputs.catalog.body | jq('[.result.resources[] | select(.name | test(\"' ~ (inputs.month | replace({'-': ''})) ~ '\")) | .url] | first') | first }}"
+
+  - id: fail_if_not_published
+    type: io.kestra.plugin.core.execution.Fail
+    # Si el mes no existe, jq devuelve null y la clave "url" ni siquiera se crea: ?? la trata como ''
+    condition: "{{ (outputs.resolve_url.values.url ?? '') == '' }}"
+    errorMessage: "El mes {{ inputs.month }} no está publicado en el portal (todavía)."
+
+  # 2) Descarga
+  - id: download
+    type: io.kestra.plugin.core.http.Download
+    uri: "{{ outputs.resolve_url.values.url }}"
+    timeout: PT15M
+    retry:
+      type: exponential
+      interval: PT30S
+      maxInterval: PT5M
+      maxAttempts: 4
+
+  # 2b) Algunos meses (2026-04, 2026-05) vienen en XLSX: se convierten a CSV con ';'
+  #     La fecha queda como número serial de Excel (dato original); Silver la interpreta.
+  - id: if_xlsx
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.resolve_url.values.url | lower | endsWith('.xlsx') }}"
+    then:
+      - id: xlsx_to_ion
+        type: io.kestra.plugin.serdes.excel.ExcelToIon
+        from: "{{ outputs.download.uri }}"
+        header: true
+        dateTimeRender: SERIAL_NUMBER
+        valueRender: UNFORMATTED_VALUE
+      - id: ion_to_csv
+        type: io.kestra.plugin.serdes.csv.IonToCsv
+        from: "{{ outputs.xlsx_to_ion.uris | values | first }}"
+        header: true
+        fieldSeparator: ";"
+
+  # 3) Subir al stage de Snowflake
+  - id: upload
+    type: io.kestra.plugin.jdbc.snowflake.Upload
+    url: "{{ render(vars.snowflake_url) }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    from: "{{ outputs.ion_to_csv.uri ?? outputs.download.uri }}"
+    stageName: "@BRONZE.ECU911_STAGE"
+    prefix: "{{ render(vars.stage_path) }}"
+    fileName: "ecu911_{{ inputs.month }}.csv"
+    compress: true
+    retry:
+      type: constant
+      interval: PT30S
+      maxAttempts: 3
+
+  # 4) Cargar a BRONZE: DELETE del mes + COPY INTO, en una transacción
+  - id: load_bronze
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    # Snowflake JDBC: con transaction=true el plugin envía todo como 1 sentencia
+    transaction: false
+    connectionPooling: false
+    url: "{{ render(vars.snowflake_url) }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    fetchType: FETCH_ONE
+    retry:
+      type: constant
+      interval: PT30S
+      maxAttempts: 3
+    sql: |
+      BEGIN;
+
+      DELETE FROM BRONZE.EMERGENCIAS_RAW WHERE _PERIODO = '{{ inputs.month }}';
+
+      COPY INTO BRONZE.EMERGENCIAS_RAW
+      FROM (
+        SELECT $1, $2, $3, $4, $5, $6, $7,
+               '{{ inputs.month }}',
+               '{{ outputs.resolve_url.values.url }}',
+               METADATA$FILENAME,
+               METADATA$FILE_ROW_NUMBER,
+               CURRENT_TIMESTAMP(),
+               '{{ execution.id }}'
+        FROM @BRONZE.ECU911_STAGE/{{ render(vars.stage_path) }}/
+      )
+      FILE_FORMAT = (TYPE = CSV FIELD_DELIMITER = ';' SKIP_HEADER = 1
+                     FIELD_OPTIONALLY_ENCLOSED_BY = '"' ENCODING = 'UTF8')
+      FORCE = TRUE;
+
+      COMMIT;
+
+      REMOVE @BRONZE.ECU911_STAGE/{{ render(vars.stage_path) }}/;
+
+  # 5) Verificar la carga (Query singular: devuelve la fila; Queries no captura el SELECT)
+  - id: count_bronze
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "{{ render(vars.snowflake_url) }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    fetchType: FETCH_ONE
+    sql: |
+      SELECT COUNT(*) AS FILAS, MIN(FECHA) AS FECHA_MIN_TEXTO, MAX(FECHA) AS FECHA_MAX_TEXTO
+      FROM BRONZE.EMERGENCIAS_RAW WHERE _PERIODO = '{{ inputs.month }}'
+
+  - id: fail_if_empty
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ outputs.count_bronze.row.FILAS == 0 }}"
+    errorMessage: "El mes {{ inputs.month }} cargó 0 filas: archivo vacío o formato inesperado."
+
+  - id: log_result
+    type: io.kestra.plugin.core.log.Log
+    message: "Mes {{ inputs.month }} cargado en BRONZE: {{ outputs.count_bronze.row.FILAS }} filas"
+
+finally:
+  # Borra los archivos descargados del storage interno de Kestra (evita llenar el disco)
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles

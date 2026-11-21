@@ -1,0 +1,180 @@
+# =============================================================================
+# PSet #2 - Pipeline ECU 911
+# Infraestructura local: Kestra (+ Postgres para su metadata) y Spark standalone.
+# Snowflake NO corre aquí: es un servicio en la nube.
+#
+# Uso:  cp .env.example .env   (y completar valores)
+#       docker compose up -d
+# =============================================================================
+
+name: pset2
+
+volumes:
+  postgres-data:      # metadata de Kestra (flows, ejecuciones, logs)
+  kestra-data:        # almacenamiento interno de Kestra (outputs de tareas)
+
+networks:
+  pset2:
+    name: pset2       # nombre fijo: los contenedores que lance Kestra se unirán a esta red
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Postgres: base de datos INTERNA de Kestra. No guarda datos de ECU 911.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: ${KESTRA_DB_PASSWORD:?definir KESTRA_DB_PASSWORD en .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [pset2]
+
+  # ---------------------------------------------------------------------------
+  # Kestra: orquestador (UI + scheduler + executor + worker en un solo proceso).
+  # ---------------------------------------------------------------------------
+  kestra:
+    image: kestra/kestra:v1.3.40
+    restart: unless-stopped
+    user: "root"                      # necesario para usar /var/run/docker.sock
+    command: server standalone        # los flows los despliega kestra-init (ver abajo)
+    ports:
+      - "8080:8080"                   # UI web
+    volumes:
+      - kestra-data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock   # permite lanzar contenedores de tareas
+      - /tmp/kestra-wd:/tmp/kestra-wd               # directorio de trabajo compartido con esos contenedores
+    environment:
+      # Variables ENV_* -> en los flows se leen como {{ envs.snowflake_account }}, etc.
+      ENV_SNOWFLAKE_ADMIN_USER: ${SNOWFLAKE_ADMIN_USER}
+      ENV_SNOWFLAKE_ADMIN_PASSWORD: ${SNOWFLAKE_ADMIN_PASSWORD}
+      ENV_SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+      ENV_SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+      ENV_SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+      ENV_SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
+      ENV_SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+      ENV_SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: kestra
+            password: ${KESTRA_DB_PASSWORD}
+        kestra:
+          tutorial-flows:
+            enabled: false
+          server:
+            basicAuth:
+              username: "${KESTRA_ADMIN_USER:?definir KESTRA_ADMIN_USER en .env}"
+              password: "${KESTRA_ADMIN_PASSWORD:?definir KESTRA_ADMIN_PASSWORD en .env}"
+          repository:
+            type: postgres
+          queue:
+            type: postgres
+          storage:
+            type: local
+            local:
+              basePath: "/app/storage"
+          tasks:
+            tmpDir:
+              path: /tmp/kestra-wd/tmp
+          url: http://localhost:8080/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dbt:
+        condition: service_completed_successfully
+    networks: [pset2]
+
+  # ---------------------------------------------------------------------------
+  # kestra-init: sube kestra/flows/*.yml a Kestra por API y termina.
+  # Falla (exit 1) si algún flow es rechazado.
+  # ---------------------------------------------------------------------------
+  kestra-init:
+    image: curlimages/curl:8.22.0
+    restart: "no"                     # tarea de una sola vez
+    entrypoint: ["sh", "/kestra/deploy_flows.sh"]
+    environment:
+      KESTRA_ADMIN_USER: ${KESTRA_ADMIN_USER}
+      KESTRA_ADMIN_PASSWORD: ${KESTRA_ADMIN_PASSWORD}
+    volumes:
+      - ./kestra:/kestra:ro
+      - ./dbt:/dbt:ro
+      - ./spark/jobs:/spark/jobs:ro
+    depends_on:
+      - kestra
+    networks: [pset2]
+
+  # ---------------------------------------------------------------------------
+  # dbt Core: "up" construye la imagen nativa y comprueba la versión una vez.
+  # Kestra espera a esta comprobación antes de lanzar tareas con la imagen local.
+  # Para desarrollo manual se usa así:
+  #   docker compose run --rm dbt build
+  # En el pipeline, dbt lo lanza Kestra (flow ecu911.dbt_build) con la misma imagen.
+  # ---------------------------------------------------------------------------
+  dbt:
+    image: ecu911-dbt:1.9.0
+    build:
+      context: ./docker/dbt
+    pull_policy: build
+    command: ["--version"]
+    restart: "no"
+    working_dir: /usr/app/dbt
+    environment:
+      SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+      SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
+      SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+      SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+    volumes:
+      - ./dbt:/usr/app/dbt
+    networks: [pset2]
+
+  # ---------------------------------------------------------------------------
+  # Spark standalone: 1 master (coordina) + 1 worker (ejecuta).
+  # ---------------------------------------------------------------------------
+  spark-master:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu
+    restart: unless-stopped
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_NO_DAEMONIZE: "true"
+      # Para jobs lanzados con "docker compose exec spark-master spark-submit ..." (el driver corre aquí)
+      SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+      SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
+      SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+      SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+    ports:
+      - "8090:8080"                   # UI del master (8080 ya lo usa Kestra)
+    volumes:
+      - ./spark/jobs:/opt/spark-jobs:ro
+    networks: [pset2]
+
+  spark-worker:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu
+    restart: unless-stopped
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
+      SPARK_NO_DAEMONIZE: "true"
+    ports:
+      - "8091:8081"                   # UI del worker
+    volumes:
+      - ./spark/jobs:/opt/spark-jobs:ro
+    depends_on:
+      - spark-master
+    networks: [pset2]

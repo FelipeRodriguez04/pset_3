@@ -1,0 +1,44 @@
+# Secretos: nunca a Git
+.env
+*.p8
+*.pem
+*.key
+
+# dbt
+dbt/**/target/
+dbt/**/dbt_packages/
+dbt/**/logs/
+.user.yml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Datos descargados localmente (el pipeline no los necesita en disco)
+data/
+*.csv.tmp
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# PDFs de referencia (enunciado y memo del PSet 1): no son parte del código
+CD_PSet_2.pdf
+PSet1_memo_*.pdf
+
+# Material auxiliar local
+entregable/
+
+# Material local: borradores y bitácora de trabajo.
+/docs/PSet2_memo_*.pdf
+!/docs/PSet2_memo_Tierra_Rodriguez_Rodriguez_Cadena_Jarrin.pdf
+/docs/PSet2_memo_*.md
+/docs/PROGRESO.md

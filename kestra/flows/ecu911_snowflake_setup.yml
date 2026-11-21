@@ -1,0 +1,61 @@
+id: snowflake_setup
+namespace: ecu911
+description: |
+  Crea la infraestructura en Snowflake: warehouse, database, schemas
+  BRONZE/SILVER/GOLD/OBT, rol y usuario de la tubería.
+  Idempotente (IF NOT EXISTS): se puede ejecutar varias veces.
+  Usa credenciales de administrador (ACCOUNTADMIN).
+
+tasks:
+  - id: create_infra
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    # Snowflake JDBC: con transaction=true el plugin envía todo como 1 sentencia
+    transaction: false
+    connectionPooling: false
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+    username: "{{ envs.snowflake_admin_user }}"
+    password: "{{ envs.snowflake_admin_password }}"
+    role: ACCOUNTADMIN
+    sql: |
+      CREATE WAREHOUSE IF NOT EXISTS {{ envs.snowflake_warehouse }}
+        WAREHOUSE_SIZE = 'XSMALL'
+        AUTO_SUSPEND = 60
+        AUTO_RESUME = TRUE
+        INITIALLY_SUSPENDED = TRUE;
+
+      CREATE DATABASE IF NOT EXISTS {{ envs.snowflake_database }};
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.BRONZE;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.SILVER;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.GOLD;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.OBT;
+
+      CREATE ROLE IF NOT EXISTS {{ envs.snowflake_role }};
+      GRANT USAGE, OPERATE ON WAREHOUSE {{ envs.snowflake_warehouse }} TO ROLE {{ envs.snowflake_role }};
+      GRANT USAGE ON DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+      GRANT ALL ON ALL SCHEMAS IN DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+      GRANT ALL ON FUTURE TABLES IN DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+      GRANT ALL ON FUTURE VIEWS IN DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+
+      CREATE USER IF NOT EXISTS {{ envs.snowflake_user }}
+        PASSWORD = '{{ envs.snowflake_password }}'
+        DEFAULT_ROLE = {{ envs.snowflake_role }}
+        DEFAULT_WAREHOUSE = {{ envs.snowflake_warehouse }}
+        MUST_CHANGE_PASSWORD = FALSE;
+      GRANT ROLE {{ envs.snowflake_role }} TO USER {{ envs.snowflake_user }};
+
+  # Comprueba que el usuario de la tubería puede conectarse y crear tablas en BRONZE
+  - id: test_pipeline_user
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    transaction: false
+    connectionPooling: false
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    fetchType: FETCH_ONE
+    sql: |
+      CREATE OR REPLACE TABLE BRONZE._TEST_SETUP (x INT);
+      DROP TABLE BRONZE._TEST_SETUP;
+      SELECT CURRENT_USER() AS usuario, CURRENT_ROLE() AS rol, CURRENT_WAREHOUSE() AS warehouse;

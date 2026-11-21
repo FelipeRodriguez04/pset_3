@@ -1,0 +1,36 @@
+id: spark_obt
+namespace: ecu911
+description: |
+  Construye la One Big Table con Spark: lee GOLD de Snowflake, une el hecho con
+  sus dimensiones, agrega features y escribe OBT.OBT_EMERGENCIAS_CANTON_DIA.
+  El driver corre en un contenedor efímero (imagen de Spark) conectado a la red
+  pset2 y envía el trabajo al cluster (spark-master + spark-worker de compose).
+  El job valida filas, duplicados y sumas: si algo no cuadra, sale con error y no escribe.
+
+tasks:
+  - id: spark_submit
+    type: io.kestra.plugin.scripts.shell.Commands
+    containerImage: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu   # misma versión que el cluster
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      networkMode: pset2          # para llegar a spark://spark-master:7077
+    namespaceFiles:
+      enabled: true
+      include:
+        - spark/jobs/**
+    env:
+      SNOWFLAKE_ACCOUNT: "{{ envs.snowflake_account }}"
+      SNOWFLAKE_USER: "{{ envs.snowflake_user }}"
+      SNOWFLAKE_PASSWORD: "{{ envs.snowflake_password }}"
+      SNOWFLAKE_ROLE: "{{ envs.snowflake_role }}"
+      SNOWFLAKE_WAREHOUSE: "{{ envs.snowflake_warehouse }}"
+      SNOWFLAKE_DATABASE: "{{ envs.snowflake_database }}"
+    commands:
+      # driver.host = IP de este contenedor: los executors del worker se conectan de vuelta a él
+      - >
+        /opt/spark/bin/spark-submit
+        --master spark://spark-master:7077
+        --conf spark.driver.host=$(hostname -i)
+        --conf spark.jars.ivy=/tmp/.ivy2
+        --packages net.snowflake:spark-snowflake_2.12:3.2.2-spark_3.5
+        spark/jobs/build_obt.py

@@ -1,0 +1,63 @@
+id: transform
+namespace: ecu911
+description: |
+  Transformación completa después de la ingesta:
+  dbt (BRONZE -> SILVER -> GOLD + tests) -> Spark (GOLD -> OBT) -> reconciliación de capas.
+  Si un test de dbt falla, Spark NO se ejecuta (la OBT se queda con la última versión buena).
+  La lanza ingest_scheduled al terminar la carga; también se puede ejecutar a mano
+  (por ejemplo, una sola vez después de un backfill con transformar = false).
+
+variables:
+  snowflake_url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/"
+
+tasks:
+  - id: dbt_build
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: ecu911
+    flowId: dbt_build
+    wait: true
+    transmitFailed: true      # si dbt falla, esta ejecución falla y no sigue a Spark
+
+  - id: spark_obt
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: ecu911
+    flowId: spark_obt
+    wait: true
+    transmitFailed: true
+
+  # Reconciliación de punta a punta: cada capa debe cuadrar con la anterior
+  - id: reconciliar
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "{{ render(vars.snowflake_url) }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    fetchType: FETCH_ONE
+    sql: |
+      SELECT
+        (SELECT COUNT(*)                   FROM BRONZE.EMERGENCIAS_RAW)            AS BRONZE_FILAS,
+        (SELECT COUNT(*)                   FROM SILVER.EMERGENCIAS)                AS SILVER_FILAS,
+        (SELECT COUNT_IF(ES_UBICACION_VALIDA) FROM SILVER.EMERGENCIAS)             AS SILVER_VALIDAS,
+        (SELECT COUNT(*)                   FROM GOLD.FCT_EMERGENCIAS_CANTON_DIA)   AS GOLD_FILAS,
+        (SELECT SUM(N_EMERGENCIAS)         FROM GOLD.FCT_EMERGENCIAS_CANTON_DIA)   AS GOLD_EMERGENCIAS,
+        (SELECT COUNT(*)                   FROM OBT.OBT_EMERGENCIAS_CANTON_DIA)    AS OBT_FILAS,
+        (SELECT SUM(N_EMERGENCIAS)         FROM OBT.OBT_EMERGENCIAS_CANTON_DIA)    AS OBT_EMERGENCIAS,
+        (SELECT MAX(FECHA)                 FROM OBT.OBT_EMERGENCIAS_CANTON_DIA)    AS OBT_ULTIMA_FECHA
+
+  - id: fail_si_descuadra
+    type: io.kestra.plugin.core.execution.Fail
+    condition: >-
+      {{ outputs.reconciliar.row.BRONZE_FILAS != outputs.reconciliar.row.SILVER_FILAS
+      or outputs.reconciliar.row.SILVER_VALIDAS != outputs.reconciliar.row.GOLD_EMERGENCIAS
+      or outputs.reconciliar.row.GOLD_FILAS != outputs.reconciliar.row.OBT_FILAS
+      or outputs.reconciliar.row.GOLD_EMERGENCIAS != outputs.reconciliar.row.OBT_EMERGENCIAS }}
+    errorMessage: "Las capas no cuadran: {{ outputs.reconciliar.row }}"
+
+  - id: log_resumen
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Pipeline OK. BRONZE {{ outputs.reconciliar.row.BRONZE_FILAS }} = SILVER {{ outputs.reconciliar.row.SILVER_FILAS }} filas |
+      SILVER válidas {{ outputs.reconciliar.row.SILVER_VALIDAS }} = GOLD {{ outputs.reconciliar.row.GOLD_EMERGENCIAS }} = OBT {{ outputs.reconciliar.row.OBT_EMERGENCIAS }} emergencias |
+      GOLD {{ outputs.reconciliar.row.GOLD_FILAS }} = OBT {{ outputs.reconciliar.row.OBT_FILAS }} cantón-días | datos hasta {{ outputs.reconciliar.row.OBT_ULTIMA_FECHA }}

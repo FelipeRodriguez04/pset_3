@@ -1,0 +1,14 @@
+version: 2
+
+seeds:
+  - name: feriados_ecuador
+    description: >
+      Días de descanso obligatorio nacional 2021-2026 (ya con traslados de la Ley de feriados).
+      Generado con la librería python `holidays` (EC) y contrastado con los calendarios del Ministerio de Turismo;
+      tipo = ley | traslado | decreto (puentes decretados: 2021-11-02, 2026-01-02). No incluye feriados locales.
+    columns:
+      - name: fecha
+        tests: [unique, not_null]
+
+  - name: cantones_reasignados
+    description: Parroquias que pasaron a ser cantón; sus filas antiguas se asignan al cantón vigente.

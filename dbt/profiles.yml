@@ -1,0 +1,16 @@
+# Conexión a Snowflake. Sin secretos: todo sale de variables de entorno
+# (docker-compose las toma de .env; Kestra las pasa desde {{ envs.* }}).
+ecu911:
+  target: prod
+  outputs:
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+      schema: SILVER        # schema por defecto; cada carpeta de modelos define el suyo
+      threads: 4
+      connect_retries: 3    # reintenta si Snowflake no responde al conectar

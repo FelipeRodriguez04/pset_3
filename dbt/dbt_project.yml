@@ -1,0 +1,31 @@
+# Proyecto dbt del PSet #2: BRONZE -> SILVER -> GOLD
+name: ecu911
+version: "1.0.0"
+profile: ecu911            # conexión definida en profiles.yml (misma carpeta)
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+
+vars:
+  # Meses con volumen anómalo detectados durante el perfilado de calidad.
+  # No se borran: se marcan para que la etapa de ML decida si excluirlos.
+  periodos_anomalos: ["2024-01"]
+
+models:
+  ecu911:
+    silver:
+      +schema: SILVER
+      +materialized: table
+    gold:
+      +schema: GOLD
+      +materialized: table
+
+seeds:
+  ecu911:
+    +schema: SILVER          # tablas de referencia (datos pequeños versionados en Git)
+    cantones_reasignados:
+      +column_types: {cod_canton_vigente: varchar}
+    feriados_ecuador:
+      +column_types: {fecha: date}
