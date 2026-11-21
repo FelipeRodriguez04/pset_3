@@ -135,11 +135,17 @@ def metricas_negocio(y: np.ndarray, score: np.ndarray, umbral: float) -> dict:
 # ---------------------------------------------------------------------------
 # MLflow
 # ---------------------------------------------------------------------------
-def configurar_mlflow(uri: str | None = None, experimento: str = EXPERIMENTO) -> str:
+def nombre_experimento() -> str:
+    import os
+    return os.getenv("ECU911_EXPERIMENTO", EXPERIMENTO)
+
+
+def configurar_mlflow(uri: str | None = None, experimento: str | None = None) -> str:
     import os
     from dotenv import load_dotenv
 
     load_dotenv(RAIZ / ".env")
+    experimento = experimento or nombre_experimento()
     uri = uri or os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5001")
     try:
         ok = requests.get(f"{uri}/health", timeout=5).ok

@@ -105,6 +105,17 @@ def cargar_snapshot(ruta: Path = RUTA_SNAPSHOT) -> pd.DataFrame:
     return _tipar(pd.read_parquet(ruta))
 
 
+def cargar_obt(ruta: Path = RUTA_SNAPSHOT) -> tuple[pd.DataFrame, dict]:
+    """OBT + metadatos para MLflow. Con ECU911_SINTETICO=1 usa datos sintéticos
+    (solo para desarrollar los notebooks; nunca para la entrega)."""
+    if os.getenv("ECU911_SINTETICO") == "1":
+        obt = obt_sintetica(n_cantones=12, n_dias=900)
+        meta = {"tabla_origen": "SINTETICO (desarrollo)", "fecha_corte": obt.fecha.max().date().isoformat(),
+                "sha256": "0" * 64, "filas": len(obt), "ruta": "sintetico"}
+        return obt, meta
+    return cargar_snapshot(ruta), metadatos_dataset(ruta)
+
+
 def metadatos_dataset(ruta: Path = RUTA_SNAPSHOT) -> dict:
     """Metadatos que se registran en cada corrida de MLflow."""
     ruta = Path(ruta)

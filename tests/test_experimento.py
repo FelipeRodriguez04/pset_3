@@ -108,3 +108,11 @@ def test_registrar_corrida_tags_y_metricas(tabla, pliegues, tmp_path):
 def test_configurar_mlflow_error_claro():
     with pytest.raises(RuntimeError, match="MLflow"):
         configurar_mlflow("http://127.0.0.1:9")
+
+
+def test_experimento_desde_entorno(monkeypatch):
+    from src.experimento import nombre_experimento
+    monkeypatch.setenv("ECU911_EXPERIMENTO", "dev-x")
+    assert nombre_experimento() == "dev-x"
+    monkeypatch.delenv("ECU911_EXPERIMENTO")
+    assert nombre_experimento() == "ecu911-demanda-alta"

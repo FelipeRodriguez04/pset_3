@@ -65,3 +65,18 @@ def test_metadatos_hash_estable(obt, tmp_path):
     assert a["fecha_corte"] == obt.fecha.max().date().isoformat()
     assert a["filas"] == len(obt)
     assert a["tabla_origen"] == "ECU911.OBT.OBT_EMERGENCIAS_CANTON_DIA"
+
+
+def test_cargar_obt_modo_sintetico(monkeypatch):
+    from src.datos import cargar_obt
+    monkeypatch.setenv("ECU911_SINTETICO", "1")
+    obt, meta = cargar_obt()
+    assert list(obt.columns) == COLUMNAS_OBT
+    assert meta["tabla_origen"].startswith("SINTETICO")
+
+
+def test_cargar_obt_sin_snapshot_falla_claro(monkeypatch, tmp_path):
+    from src.datos import cargar_obt
+    monkeypatch.delenv("ECU911_SINTETICO", raising=False)
+    with pytest.raises(FileNotFoundError, match="descargar_snapshot"):
+        cargar_obt(tmp_path / "no.parquet")
