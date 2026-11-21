@@ -320,11 +320,13 @@ def reduccion_fn_vs_regla(y, score, alerta_regla) -> dict:
 class ResultadoCV:
     pliegues: pd.DataFrame
     resumen: dict = field(default_factory=dict)
+    predicciones: pd.DataFrame | None = None     # fuera de pliegue (guardar_predicciones=True)
 
 
 def evaluar_cv(pipe, train: pd.DataFrame, cv: SplitTemporal | None = None,
                verbose: bool = False, columnas: list | None = None,
-               muestra_train: int | None = None) -> ResultadoCV:
+               muestra_train: int | None = None,
+               guardar_predicciones: bool = False) -> ResultadoCV:
     """Validación cruzada temporal sin fuga.
 
     En cada pliegue: (1) el umbral P90 del target se calcula SOLO con el pliegue de
@@ -333,10 +335,12 @@ def evaluar_cv(pipe, train: pd.DataFrame, cv: SplitTemporal | None = None,
     `columnas`: entrada del modelo (por defecto ENTRADA). `muestra_train`: si se indica, la
     métrica de entrenamiento se calcula sobre esa cantidad de filas (modelos costosos de
     predecir, como Chronos); la de validación siempre usa el pliegue completo.
+    `guardar_predicciones`: devuelve también el score de cada fila de validación (fuera de
+    pliegue), usado para elegir el umbral de decisión sin tocar el test.
     """
     cv = cv or SplitTemporal()
     cols = list(columnas or ENTRADA)
-    filas = []
+    filas, preds = [], []
     for k, (i_tr, i_va) in enumerate(cv.split(train), 1):
         tr, va = train.iloc[i_tr], train.iloc[i_va]
         u = umbrales_p90(tr)
@@ -352,6 +356,10 @@ def evaluar_cv(pipe, train: pd.DataFrame, cv: SplitTemporal | None = None,
         s_tr = modelo.predict_proba(tr_m[cols])[:, 1]
         regla_va = va["media_mismo_dia_4s"] > va["umbral_p90"]
         neg = reduccion_fn_vs_regla(va[TARGET], s_va, regla_va)
+        if guardar_predicciones:
+            preds.append(pd.DataFrame({"pliegue": k, "cod_canton": va["cod_canton"].to_numpy(),
+                                       "fecha": va["fecha"].to_numpy(), TARGET: va[TARGET].to_numpy(),
+                                       "score": s_va, "regla": regla_va.to_numpy()}))
         filas.append({"pliegue": k,
                       "pr_auc_train": pr_auc(tr_m[TARGET], s_tr),
                       "pr_auc_val": pr_auc(va[TARGET], s_va),
@@ -379,7 +387,7 @@ def evaluar_cv(pipe, train: pd.DataFrame, cv: SplitTemporal | None = None,
         "seg_fit_total": p["seg_fit"].sum(),
         "seg_pred_promedio": p["seg_pred"].mean(),
     }
-    return ResultadoCV(p, resumen)
+    return ResultadoCV(p, resumen, pd.concat(preds, ignore_index=True) if preds else None)
 
 
 # =============================================================================
@@ -414,60 +422,76 @@ def parametros_datos(meta: dict, train: pd.DataFrame) -> dict:
             "cv": "SplitTemporal(n_splits=5, gap_dias=3)"}
 
 
-def registrar_corrida(nombre: str, pipe, train: pd.DataFrame, meta: dict, *,
-                      fase: str, familia: str, params: dict | None = None,
-                      resultado: ResultadoCV | None = None, registrar_modelo: bool = True,
-                      nested: bool = False, tags_extra: dict | None = None,
-                      columnas: list | None = None, muestra_train: int | None = None):
-    """Crea una corrida de MLflow con parámetros, datos, métricas, tags y el pipeline.
+def registrar_en_corrida_activa(pipe, train: pd.DataFrame, meta: dict, *, fase: str,
+                                familia: str, params: dict | None = None,
+                                resultado: ResultadoCV | None = None,
+                                registrar_modelo: bool = True, tags_extra: dict | None = None,
+                                columnas: list | None = None, muestra_train: int | None = None,
+                                metricas_extra: dict | None = None):
+    """Escribe en la corrida de MLflow ACTIVA: tags, parámetros, datos, métricas y el pipeline.
 
     Si registrar_modelo=True, reajusta el pipeline con TODO el entrenamiento (umbral P90
     de todo el entrenamiento) y lo guarda con mlflow.sklearn.log_model + firma + ejemplo.
-    Devuelve (run_id, pipeline_ajustado).
+    Devuelve el pipeline ajustado (o None).
     """
     import mlflow
     from mlflow.models import infer_signature
 
     cols = list(columnas or ENTRADA)
     resultado = resultado or evaluar_cv(pipe, train, columnas=cols, muestra_train=muestra_train)
-    with mlflow.start_run(run_name=nombre, nested=nested) as run:
-        mlflow.set_tags({"fase": fase, "familia": familia, "modelo": nombre,
-                         **contexto_git(), **(tags_extra or {})})
-        hp = {k: v for k, v in pipe.named_steps["modelo"].get_params().items()
-              if not callable(v) and not isinstance(v, BaseEstimator)}
-        mlflow.log_params({**{f"hp_{k}": v for k, v in hp.items()},
-                           "semilla": SEMILLA, **parametros_datos(meta, train),
-                           **(params or {})})
-        mlflow.log_metrics({k: float(v) for k, v in resultado.resumen.items()})
-        for _, f in resultado.pliegues.iterrows():
-            paso = int(f["pliegue"])
-            mlflow.log_metric("pliegue_pr_auc_val", f["pr_auc_val"], step=paso)
-            mlflow.log_metric("pliegue_pr_auc_train", f["pr_auc_train"], step=paso)
-            mlflow.log_metric("pliegue_reduccion_fn_val", f["reduccion_fn_val"], step=paso)
+    nombre = mlflow.active_run().info.run_name
+    mlflow.set_tags({"fase": fase, "familia": familia, "modelo": nombre,
+                     **contexto_git(), **(tags_extra or {})})
+    hp = {k: v for k, v in pipe.named_steps["modelo"].get_params().items()
+          if not callable(v) and not isinstance(v, BaseEstimator)}
+    mlflow.log_params({**{f"hp_{k}": v for k, v in hp.items()},
+                       "semilla": SEMILLA, **parametros_datos(meta, train), **(params or {})})
+    mlflow.log_metrics({k: float(v) for k, v in resultado.resumen.items()})
+    mlflow.log_metrics({k: float(v) for k, v in (metricas_extra or {}).items()})
+    for _, f in resultado.pliegues.iterrows():
+        paso = int(f["pliegue"])
+        mlflow.log_metric("pliegue_pr_auc_val", f["pr_auc_val"], step=paso)
+        mlflow.log_metric("pliegue_pr_auc_train", f["pr_auc_train"], step=paso)
+        mlflow.log_metric("pliegue_reduccion_fn_val", f["reduccion_fn_val"], step=paso)
 
-        ajustado = None
-        if registrar_modelo:
-            datos = etiquetar(train, umbrales_p90(train))
-            X, y = datos[cols], datos[TARGET]
-            ajustado = clone(pipe)
-            t0 = time.perf_counter()
-            ajustado.fit(X, y)
-            mlflow.log_metric("seg_entrenamiento_final", time.perf_counter() - t0)
-            m = datos.sample(muestra_train, random_state=SEMILLA) if muestra_train else datos
-            mlflow.log_metric("train_completo_pr_auc",
-                              pr_auc(m[TARGET], ajustado.predict_proba(m[cols])[:, 1]))
-            ejemplo = X.head(5)
-            firma = infer_signature(ejemplo, ajustado.predict_proba(ejemplo))
-            # Dataset de entrenamiento (esquema + digest). La tabla de origen, el corte y el hash
-            # completo del snapshot quedan además como parámetros datos_* de la corrida.
-            mlflow.log_input(mlflow.data.from_pandas(
-                datos[list(dict.fromkeys(cols + [TARGET, "fecha"]))],
-                name=f"train_t3 <- {meta['tabla_origen']}", targets=TARGET), context="training")
-            mlflow.sklearn.log_model(ajustado, name="modelo", signature=firma,
-                                     input_example=ejemplo,
-                                     pyfunc_predict_fn="predict_proba",
-                                     # skops no admite clases propias (PerfilCantonal): cloudpickle.
-                                     # Los modelos solo se cargan desde el servidor del equipo.
-                                     serialization_format="cloudpickle",
-                                     code_paths=[str(RAIZ / "src")])
+    if not registrar_modelo:
+        return None
+    datos = etiquetar(train, umbrales_p90(train))
+    X, y = datos[cols], datos[TARGET]
+    ajustado = clone(pipe)
+    t0 = time.perf_counter()
+    ajustado.fit(X, y)
+    mlflow.log_metric("seg_entrenamiento_final", time.perf_counter() - t0)
+    m = datos.sample(muestra_train, random_state=SEMILLA) if muestra_train else datos
+    mlflow.log_metric("train_completo_pr_auc",
+                      pr_auc(m[TARGET], ajustado.predict_proba(m[cols])[:, 1]))
+    ejemplo = X.head(5)
+    firma = infer_signature(ejemplo, ajustado.predict_proba(ejemplo))
+    # Dataset de entrenamiento (esquema + digest). La tabla de origen, el corte y el hash
+    # completo del snapshot quedan además como parámetros datos_* de la corrida.
+    mlflow.log_input(mlflow.data.from_pandas(
+        datos[list(dict.fromkeys(cols + [TARGET, "fecha"]))],
+        name=f"train_t3 <- {meta['tabla_origen']}", targets=TARGET), context="training")
+    mlflow.sklearn.log_model(ajustado, name="modelo", signature=firma, input_example=ejemplo,
+                             pyfunc_predict_fn="predict_proba",
+                             # skops no admite clases propias (PerfilCantonal): cloudpickle.
+                             # Los modelos solo se cargan desde el servidor del equipo.
+                             serialization_format="cloudpickle",
+                             code_paths=[str(RAIZ / "src")])
+    return ajustado
+
+
+def registrar_corrida(nombre: str, pipe, train: pd.DataFrame, meta: dict, *,
+                      fase: str, familia: str, params: dict | None = None,
+                      resultado: ResultadoCV | None = None, registrar_modelo: bool = True,
+                      nested: bool = False, tags_extra: dict | None = None,
+                      columnas: list | None = None, muestra_train: int | None = None):
+    """Abre una corrida nueva (o anidada) y la llena con registrar_en_corrida_activa.
+    Devuelve (run_id, pipeline_ajustado)."""
+    import mlflow
+    with mlflow.start_run(run_name=nombre, nested=nested) as run:
+        ajustado = registrar_en_corrida_activa(
+            pipe, train, meta, fase=fase, familia=familia, params=params, resultado=resultado,
+            registrar_modelo=registrar_modelo, tags_extra=tags_extra, columnas=columnas,
+            muestra_train=muestra_train)
         return run.info.run_id, ajustado
