@@ -1,0 +1,6 @@
+hallazgo,evidencia,consecuencia
+1. Escala muy distinta entre cantones,"Quito/cantón menor = 5,367x; IQR global marca 12.2% de filas vs 2.3% sobre volumen/P90; Spearman con y: media_prev_28d 0.054 vs relativa 0.095","Normalizar cada conteo por el P90 del propio cantón (PerfilCantonal, ajustado solo en train); no eliminar atípicos; no usar one-hot de 224 cantones (la escala entra como log P90)"
+2. Clases desbalanceadas,8.1% positivos (11.3:1); menor en cantones pequeños por empates con el umbral (6.9% vs 9.3%),"Métrica técnica PR-AUC (no accuracy); probar class_weight en el tuning; umbral de decisión por costo FN:FP = 5:1, no 0,5"
+3. Deriva temporal,"volumen nacional 10,342 → 8,829 emergencias/día; prevalencia por año 13.5% → 5.5%",Validación temporal (no aleatoria) con P90 recalculado por pliegue; features relativas al nivel reciente (rel_media_prev_7d / 28d); esperar dispersión entre pliegues
+4. Enero 2024 con subregistro,prevalencia 2.1% vs 7.0% y 9.1% en los meses vecinos,Excluir del entrenamiento las filas cuyo t o t+3 cae en 2024-01 (y del cálculo del P90)
+5. Feriado en t+3,prevalencia 19.3% con feriado vs 7.7% sin feriado,Usar es_feriado_t3 (se conoce de antemano: calendario oficial)

@@ -1,0 +1,61 @@
+# =============================================================================
+# PSet #3 - MLflow tracking server (ECU 911)
+#   backend store  : Postgres (experimentos, corridas, parámetros, métricas, registry)
+#   artifact store : volumen local servido por el propio MLflow (--serve-artifacts):
+#                    los notebooks suben modelos por HTTP, sin compartir carpetas.
+#
+# Uso:  cp .env.example .env   (y completar)
+#       docker compose up -d
+#       UI: http://localhost:5000
+# =============================================================================
+
+name: pset3
+
+volumes:
+  mlflow-db:          # backend store (Postgres)
+  mlflow-artifacts:   # artifact store (modelos, gráficos, ejemplos de entrada)
+
+services:
+
+  mlflow-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mlflow
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:?definir MLFLOW_DB_PASSWORD en .env}
+    volumes:
+      - mlflow-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d mlflow -U mlflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mlflow:
+    # Misma versión que el cliente de requirements.txt (mlflow==3.18.0)
+    image: ghcr.io/mlflow/mlflow:v3.18.0
+    restart: unless-stopped
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-artifacts:/mlartifacts
+    environment:
+      MLFLOW_DB_PASSWORD: ${MLFLOW_DB_PASSWORD}
+    # La imagen oficial no incluye el driver de Postgres: se instala (versión fija) al arrancar.
+    command: >
+      sh -c "pip install --quiet --no-cache-dir psycopg2-binary==2.9.10 &&
+             mlflow server
+             --host 0.0.0.0 --port 5000
+             --backend-store-uri postgresql://mlflow:$${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
+             --artifacts-destination /mlartifacts
+             --serve-artifacts"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s

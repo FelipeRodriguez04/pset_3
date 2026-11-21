@@ -1,0 +1,36 @@
+# Python 3.12 (probado con 3.12.13). Instalar:
+#   uv venv --python 3.12 .venv
+#   uv pip install --python .venv -r requirements.txt --index-strategy unsafe-best-match
+# (o: python -m venv .venv && .venv/Scripts/pip install -r requirements.txt)
+#
+# PyTorch se instala en su versión CPU (no hace falta GPU para Chronos-Bolt).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Tracking y registro (misma versión que la imagen del servidor en docker-compose.yml)
+mlflow==3.18.0
+
+# Datos
+snowflake-connector-python[pandas]==5.2.0
+pyarrow==26.0.1
+python-dotenv==1.2.4
+pandas==3.1.1
+numpy==2.5.5
+
+# Modelado
+scikit-learn==1.9.1
+scipy==1.18.1
+optuna==5.1.0
+
+# State of the Art: modelo fundacional de series de tiempo
+torch==2.15.0
+chronos-forecasting==2.3.2
+
+# Gráficos
+matplotlib==3.11.2
+seaborn==0.13.2
+
+# Notebooks
+jupyter==1.1.1
+nbconvert==7.17.2
+ipykernel==7.4.0
+nbformat==5.11.1

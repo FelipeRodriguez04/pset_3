@@ -1,0 +1,28 @@
+# Secretos: nunca a Git
+.env
+*.p8
+*.pem
+*.key
+
+# Entorno de Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Datos locales (la fuente oficial es Snowflake; el CSV es solo respaldo)
+data/
+
+# MLflow local (el servidor guarda todo en volúmenes de Docker)
+mlruns/
+mlartifacts/
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Enunciado y borradores
+CD_PSet_3.pdf
+/docs/PSet3_memo_*.md
