@@ -46,13 +46,15 @@ services:
     environment:
       MLFLOW_DB_PASSWORD: ${MLFLOW_DB_PASSWORD}
     # La imagen oficial no incluye el driver de Postgres: se instala (versión fija) al arrancar.
-    command: >
-      sh -c "pip install --quiet --no-cache-dir psycopg2-binary==2.9.10 &&
-             mlflow server
-             --host 0.0.0.0 --port 5000
-             --backend-store-uri postgresql://mlflow:$${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
-             --artifacts-destination /mlartifacts
-             --serve-artifacts"
+    # --allowed-hosts: la UI y la API se usan desde el navegador/notebooks del equipo (localhost).
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        pip install --quiet --no-cache-dir psycopg2-binary==2.9.10 &&
+        exec mlflow server --host 0.0.0.0 --port 5000
+        --backend-store-uri postgresql+psycopg2://mlflow:$${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
+        --artifacts-destination /mlartifacts --serve-artifacts
+        --allowed-hosts "localhost,localhost:*,127.0.0.1,127.0.0.1:*"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 10s

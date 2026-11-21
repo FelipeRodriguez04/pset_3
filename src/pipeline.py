@@ -458,11 +458,16 @@ def registrar_corrida(nombre: str, pipe, train: pd.DataFrame, meta: dict, *,
                               pr_auc(m[TARGET], ajustado.predict_proba(m[cols])[:, 1]))
             ejemplo = X.head(5)
             firma = infer_signature(ejemplo, ajustado.predict_proba(ejemplo))
+            # Dataset de entrenamiento (esquema + digest). La tabla de origen, el corte y el hash
+            # completo del snapshot quedan además como parámetros datos_* de la corrida.
             mlflow.log_input(mlflow.data.from_pandas(
-                datos[list(dict.fromkeys(cols + [TARGET, "fecha"]))], source=meta["tabla_origen"],
-                name="obt_train_t3", targets=TARGET), context="training")
+                datos[list(dict.fromkeys(cols + [TARGET, "fecha"]))],
+                name=f"train_t3 <- {meta['tabla_origen']}", targets=TARGET), context="training")
             mlflow.sklearn.log_model(ajustado, name="modelo", signature=firma,
                                      input_example=ejemplo,
                                      pyfunc_predict_fn="predict_proba",
+                                     # skops no admite clases propias (PerfilCantonal): cloudpickle.
+                                     # Los modelos solo se cargan desde el servidor del equipo.
+                                     serialization_format="cloudpickle",
                                      code_paths=[str(RAIZ / "src")])
         return run.info.run_id, ajustado
