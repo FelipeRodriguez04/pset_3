@@ -1,0 +1,11 @@
+h,feature,spearman_y,pr_auc_cv,pr_auc_cv_std,prevalencia
+3,media_prev_7d (base OBT),0.0595,0.0751,0.0115,0.0811
+3,prom_4_mismo_dia,0.0577,0.0731,0.0113,0.0811
+3,tendencia_7_28,0.0315,0.0816,0.0074,0.0811
+3,ratio_nivel_p90,0.111,0.1437,0.0223,0.0811
+3,regla de negocio (PSet 1),0.1211,0.1494,0.0227,0.0811
+7,media_prev_7d (base OBT),0.0571,0.076,0.0129,0.0812
+7,prom_4_mismo_dia,0.0574,0.0742,0.0121,0.0812
+7,tendencia_7_28,0.0218,0.08,0.0086,0.0812
+7,ratio_nivel_p90,0.1107,0.1463,0.0222,0.0812
+7,regla de negocio (PSet 1),0.1207,0.1517,0.0227,0.0812
