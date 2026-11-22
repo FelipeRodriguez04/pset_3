@@ -48,10 +48,8 @@ CD_PSet_3.pdf
 mlruns/
 mlartifacts/
 .ipynb_checkpoints/
-.superpowers/
 .pytest_cache/
 /docs/PSet3_memo_*.tex
 /docs/PSet3_memo_*.aux
 /docs/PSet3_memo_*.log
 /docs/PSet3_memo_*.out
-/docs/superpowers/
