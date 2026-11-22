@@ -73,3 +73,12 @@ def test_etiqueta_canton_no_visto_es_cero():
     df = pd.DataFrame({"cod_canton": ["NUEVO"], "dow_obj": [1], "n_obj": [99]})
     p = pd.Series([1.0], index=pd.MultiIndex.from_tuples([("A", 1)], names=["cod_canton", "dia_semana"]))
     assert list(etiquetar(df, p)) == [0]
+
+
+def test_holdout_igual_para_ambos_horizontes_con_corte_a_mitad_de_mes():
+    # 432 días desde 2021-07-01 -> corte 2022-09-05: con max(fecha) por horizonte,
+    # h=3 (max 09-02) y h=7 (max 08-29) darían inicios distintos.
+    obt = obt_sintetica(n_cantones=3, n_dias=432, seed=11)
+    assert obt.fecha.max() == pd.Timestamp("2022-09-05")
+    inicios = {h: separar_holdout(construir_tabla_modelado(obt, h), h)[1].fecha.min() for h in (3, 7)}
+    assert inicios[3] == inicios[7] == pd.Timestamp("2022-04-01")

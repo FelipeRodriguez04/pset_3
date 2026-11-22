@@ -183,7 +183,7 @@ services:
 
   # ===========================================================================
   # PSet 3 - MLflow (perfil "mlflow"): solo arranca con
-  #   docker compose --profile mlflow up -d
+  #   docker compose --profile mlflow up -d mlflow
   # Backend store: Postgres propio. Artifact store: volumen servido por MLflow
   # (--serve-artifacts), así el cliente en el host sube artefactos por HTTP.
   # ===========================================================================

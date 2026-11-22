@@ -163,6 +163,14 @@ def git_commit() -> str:
                           text=True, check=True).stdout.strip()
 
 
+def git_dirty() -> str:
+    """'true' si src/ tiene cambios sin commit (git_commit no bastaría para reproducir la lógica).
+    No mira notebooks/: sus salidas cambian al ejecutarlos."""
+    salida = subprocess.run(["git", "status", "--porcelain", "--", "src"], cwd=RAIZ,
+                            capture_output=True, text=True, check=True).stdout
+    return "true" if salida.strip() else "false"
+
+
 def registrar_corrida(nombre: str, fase: str, familia: str, h: int, params: dict,
                       resultado: ResultadoCV | None, meta: dict, pipeline=None,
                       X_ejemplo: pd.DataFrame | None = None, nested: bool = False,
@@ -171,7 +179,7 @@ def registrar_corrida(nombre: str, fase: str, familia: str, h: int, params: dict
     """Registra una corrida con parámetros, datos, métricas, tags y (si hay) el pipeline."""
     with mlflow.start_run(run_name=nombre, nested=nested) as run:
         mlflow.set_tags({"fase": fase, "familia": familia, "horizonte": f"t{h}",
-                         "git_commit": git_commit(), **(tags_extra or {})})
+                         "git_commit": git_commit(), "git_dirty": git_dirty(), **(tags_extra or {})})
         mlflow.log_params({**{k: str(v)[:500] for k, v in params.items()}, "seed": SEED, "horizonte": h,
                            "tabla_origen": meta["tabla_origen"], "fecha_corte": meta["fecha_corte"],
                            "dataset_sha256": meta["sha256"], "dataset_filas": meta["filas"]})

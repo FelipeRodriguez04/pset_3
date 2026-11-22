@@ -48,7 +48,7 @@ FEATURES_NUM = (
     ["n_emergencias"] + SERVICIOS
     + ["lag_1d", "lag_7d", "lag_14d", "lag_28d", "media_prev_7d", "media_prev_28d",
        "prom_4_mismo_dia", "tendencia_7_28",
-       "dow_obj", "mes_obj", "es_feriado_obj", "es_feriado", "es_periodo_anomalo"]
+       "dow_obj", "mes_obj", "es_feriado_obj", "es_feriado"]
 )
 FEATURES_CAT = ["region"]
 COLUMNAS_X = COLUMNAS_ID + FEATURES_NUM + FEATURES_CAT
@@ -150,12 +150,13 @@ def construir_tabla_modelado(obt: pd.DataFrame, h: int) -> pd.DataFrame:
     df["tendencia_7_28"] = (df["media_prev_7d"] + 1) / (df["media_prev_28d"] + 1)
 
     df["fecha_obj"] = df["fecha"] + pd.Timedelta(days=h)
-    df["dow_obj"] = df["fecha_obj"].dt.dayofweek + 1        # 1 = lunes, como dim_fecha
+    df["dow_obj"] = df["fecha_obj"].dt.isocalendar().day.astype("int64")        # 1 = lunes, como dim_fecha
     df["mes_obj"] = df["fecha_obj"].dt.month
     df["es_feriado_obj"] = df[f"es_feriado_t{h}"]
     df["n_obj"] = df[f"obj_n_emergencias_t{h}"]
 
-    for c in ["es_feriado_obj", "es_feriado", "es_periodo_anomalo"]:
+    # es_periodo_anomalo NO es feature: la marca de 2024-01 se puso a posteriori (PSet 2)
+    for c in ["es_feriado_obj", "es_feriado"]:
         df[c] = df[c].astype("float").astype("int8")
 
     df = df.dropna(subset=FEATURES_NUM + FEATURES_CAT + ["n_obj"]).reset_index(drop=True)
@@ -197,7 +198,7 @@ def obt_sintetica(n_cantones: int = 6, n_dias: int = 400, seed: int = SEED) -> p
     df["mes"] = f.dt.month
     df["periodo"] = f.dt.strftime("%Y-%m")
     df["dia_mes"] = f.dt.day
-    df["dia_semana"] = f.dt.dayofweek + 1
+    df["dia_semana"] = f.dt.isocalendar().day.astype("int64")
     df["nombre_dia"] = f.dt.day_name()
     df["es_fin_de_semana"] = df["dia_semana"] >= 6
     df["es_feriado"] = feriados[f].values

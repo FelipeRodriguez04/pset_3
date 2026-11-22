@@ -1,3 +1,3 @@
-h,filas,filas_train,filas_test,prevalencia_train,prevalencia_test,pct_celdas_p90_cero
-3,415968,374752,40544,0.0811,0.079,0.0
-7,415072,373856,39648,0.0812,0.0795,0.0
+h,filas_train,prevalencia_train,pct_celdas_p90_cero
+3,374752,0.0811,0.0
+7,373856,0.0812,0.0

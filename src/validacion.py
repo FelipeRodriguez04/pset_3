@@ -14,7 +14,10 @@ from sklearn.model_selection import TimeSeriesSplit
 
 
 def inicio_holdout(tabla: pd.DataFrame, meses: int = 6) -> pd.Timestamp:
-    corte = tabla["fecha"].max()
+    # fecha de corte del snapshot = último día con volumen observado = max(fecha_obj).
+    # No max(fecha): la tabla pierde los últimos h días (sin target) y cada horizonte
+    # tendría un hold-out distinto.
+    corte = tabla["fecha_obj"].max()
     return (corte.to_period("M") - (meses - 1)).to_timestamp()
 
 

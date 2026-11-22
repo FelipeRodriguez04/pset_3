@@ -116,3 +116,11 @@ def test_experimento_desde_entorno(monkeypatch):
     assert nombre_experimento() == "dev-x"
     monkeypatch.delenv("ECU911_EXPERIMENTO")
     assert nombre_experimento() == "ecu911-demanda-alta"
+
+
+def test_registrar_corrida_marca_arbol_sucio(tabla, pliegues, tmp_path):
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path}/mlflow.db")
+    mlflow.set_experiment(experiment_id=mlflow.create_experiment("d", artifact_location=tmp_path.as_uri()))
+    meta = {"tabla_origen": "X", "fecha_corte": "2022-01-01", "sha256": "a" * 64, "filas": 1}
+    run_id = registrar_corrida("r", "baseline", "regla", 3, {}, None, meta)
+    assert mlflow.get_run(run_id).data.tags["git_dirty"] in {"true", "false"}

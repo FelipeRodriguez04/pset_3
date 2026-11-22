@@ -63,3 +63,30 @@ def test_liberar_llm_pide_descargar(monkeypatch):
     monkeypatch.setattr(llm.requests, "post", lambda url, json, timeout: llamadas.append(json) or R())
     llm.liberar_llm()
     assert llamadas[0]["keep_alive"] == 0 and llamadas[0]["model"] == llm.MODELO
+
+
+def test_predecir_llm_error_de_red_no_corta(monkeypatch):
+    import requests as rq
+    import src.llm as llm
+
+    class Ok:
+        def raise_for_status(self): pass
+        def json(self): return {"response": '{"probabilidad": 0.3}'}
+
+    respuestas = iter([rq.ConnectionError("caído"), Ok()])
+
+    def post(url, timeout, json):
+        r = next(respuestas)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    fila = {"canton": "X", "dia_obj": "lunes", "feriado_obj": False, "h": 3, "p90": 2.4, "historia": [1, 2]}
+    out = llm.predecir_llm([fila, fila])
+    assert list(out.valido) == [False, True] and out.score.iloc[1] == 0.3
+
+
+def test_prompt_muestra_p90_con_decimal():
+    fila = {"canton": "X", "dia_obj": "lunes", "feriado_obj": False, "h": 3, "p90": 2.4, "historia": [1, 2]}
+    assert "2.4" in construir_prompt(fila)

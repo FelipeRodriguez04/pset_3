@@ -80,3 +80,8 @@ def test_cargar_obt_sin_snapshot_falla_claro(monkeypatch, tmp_path):
     monkeypatch.delenv("ECU911_SINTETICO", raising=False)
     with pytest.raises(FileNotFoundError, match="descargar_snapshot"):
         cargar_obt(tmp_path / "no.parquet")
+
+
+def test_periodo_anomalo_no_es_feature():
+    # la marca de 2024-01 se puso a posteriori en el PSet 2: no existe al momento de predecir
+    assert "es_periodo_anomalo" not in FEATURES_NUM + FEATURES_CAT

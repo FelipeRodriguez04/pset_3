@@ -23,7 +23,7 @@ PLANTILLA = """Eres analista del ECU 911 (Ecuador). Debes estimar si el cantón 
 demanda inusualmente alta de emergencias dentro de {h} días.
 
 Definición: hay demanda alta si las emergencias de ese día superan el percentil 90 histórico \
-del cantón para ese día de la semana. Para el día objetivo ({dia_obj}) ese umbral es {p90:.0f} emergencias.
+del cantón para ese día de la semana. Para el día objetivo ({dia_obj}) ese umbral es {p90:.1f} emergencias.
 El día objetivo {feriado}.
 
 Emergencias diarias de los últimos {n} días (de la más antigua a la más reciente; el último valor es hoy):
@@ -58,12 +58,15 @@ def predecir_llm(filas: list[dict], modelo: str = MODELO, url: str = URL, timeou
     salida = []
     for fila in filas:
         t0 = time.perf_counter()
-        r = requests.post(f"{url}/api/generate", timeout=timeout, json={
-            "model": modelo, "prompt": construir_prompt(fila), "stream": False, "format": ESQUEMA,
-            "options": {"temperature": 0, "seed": 42, "num_predict": 40},
-        })
-        r.raise_for_status()
-        texto = r.json().get("response", "")
+        try:
+            r = requests.post(f"{url}/api/generate", timeout=timeout, json={
+                "model": modelo, "prompt": construir_prompt(fila), "stream": False, "format": ESQUEMA,
+                "options": {"temperature": 0, "seed": 42, "num_predict": 40},
+            })
+            r.raise_for_status()
+            texto = r.json().get("response", "")
+        except requests.RequestException as e:   # un fallo de red no pierde lo ya predicho
+            texto = f"ERROR: {type(e).__name__}"
         p = parsear_respuesta(texto)
         salida.append({"score": p, "valido": p is not None, "latencia_s": time.perf_counter() - t0,
                        "respuesta": texto[:200]})
