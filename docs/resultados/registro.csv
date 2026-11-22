@@ -1,5 +1,5 @@
 modelo_registrado,alias,version,run_id,modelo
-ecu911-t3-modelo,champion,1,b971b96e7c594f6b9fc8aeeef0729437,HistGradientBoosting
-ecu911-t3-modelo,challenger,2,05b8d7e8d98c42b08703ec34ad97935d,MLP
-ecu911-t7-modelo,champion,1,13965788fb0f483b8150ccd4284fa074,HistGradientBoosting
-ecu911-t7-modelo,challenger,2,283bf4707bb34615a6d18c50c85de2c7,MLP
+ecu911-t3-modelo,champion,1,8ef2ae5e31c94cdd856e635b91acf08f,HistGradientBoosting
+ecu911-t3-modelo,challenger,2,16930fef1367457784a82f3c1f7794c2,MLP
+ecu911-t7-modelo,champion,1,08a437000d7a4e0ba1d84d8f16d784ab,HistGradientBoosting
+ecu911-t7-modelo,challenger,2,cdd3171d56c44f92b7e47c5aec6d52d4,MLP

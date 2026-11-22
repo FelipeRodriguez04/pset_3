@@ -1,3 +1,3 @@
 h,ganador,cv_ganador,cv_timesfm,diferencia_media,std_diferencia_pareada,pliegues_que_gana_el_ganador
-3,HistGradientBoosting,0.1848 ± 0.0535,0.1838 ± 0.0298,0.00105,0.02766,3
-7,HistGradientBoosting,0.1849 ± 0.0563,0.1797 ± 0.0306,0.00526,0.02983,3
+3,HistGradientBoosting,0.1852 ± 0.0538,0.1838 ± 0.0298,0.00144,0.02828,3
+7,HistGradientBoosting,0.1844 ± 0.0565,0.1797 ± 0.0306,0.00477,0.03015,3
