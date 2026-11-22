@@ -3,46 +3,46 @@
     {
       "modelo": "HistGradientBoosting",
       "familia": "boosting",
-      "pr_auc_cv_mean": 0.1781007258809551,
-      "pr_auc_cv_std": 0.05572576467053835,
-      "run_id": "25a64b7af956411f9b2e29842460af26"
+      "pr_auc_cv_mean": 0.17844831074841633,
+      "pr_auc_cv_std": 0.0556311892084207,
+      "run_id": "be4cc0808e89485e920ba599c9e98f29"
     },
     {
       "modelo": "MLP",
       "familia": "red_neuronal",
-      "pr_auc_cv_mean": 0.16685156171410792,
-      "pr_auc_cv_std": 0.04718337053261585,
-      "run_id": "359154b2f81b44e79d0ba5dd2a0cc128"
+      "pr_auc_cv_mean": 0.167116576530641,
+      "pr_auc_cv_std": 0.05144837784354963,
+      "run_id": "6cd87b63ac6c4bdcbd53a4429d95be93"
     },
     {
       "modelo": "LogisticRegression",
       "familia": "lineal",
-      "pr_auc_cv_mean": 0.16236148546515716,
-      "pr_auc_cv_std": 0.03511079950672596,
-      "run_id": "42e1ebbe9eb64f7b9b74187ffbbc0a13"
+      "pr_auc_cv_mean": 0.1619751702099701,
+      "pr_auc_cv_std": 0.034437748669851706,
+      "run_id": "a2481c1c3e8d4ae9a5db0ed966b3acfd"
     }
   ],
   "7": [
     {
       "modelo": "HistGradientBoosting",
       "familia": "boosting",
-      "pr_auc_cv_mean": 0.1778848410658796,
-      "pr_auc_cv_std": 0.05424285866940921,
-      "run_id": "61cd930857ce40ebb9801eb2effbb38d"
+      "pr_auc_cv_mean": 0.1781038524450623,
+      "pr_auc_cv_std": 0.0540983940260959,
+      "run_id": "120cb344e44d478a8fa4acc3258d037d"
     },
     {
       "modelo": "MLP",
       "familia": "red_neuronal",
-      "pr_auc_cv_mean": 0.16970761452317457,
-      "pr_auc_cv_std": 0.05565386532667148,
-      "run_id": "4e6acf4a7cf7473bb1f817445c79181a"
+      "pr_auc_cv_mean": 0.17412078058026256,
+      "pr_auc_cv_std": 0.05689693228254917,
+      "run_id": "1cd69c1ecd074ab2bc0aa566782a7a15"
     },
     {
       "modelo": "LogisticRegression",
       "familia": "lineal",
-      "pr_auc_cv_mean": 0.16349194694499683,
-      "pr_auc_cv_std": 0.03854299559428002,
-      "run_id": "4eb12fe74eb847e59b3c4e19982f624f"
+      "pr_auc_cv_mean": 0.16322646092249357,
+      "pr_auc_cv_std": 0.038185768865943576,
+      "run_id": "f19e78cb64c3461b8771e10a2a2730e6"
     }
   ]
 }
