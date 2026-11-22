@@ -68,3 +68,9 @@ def predecir_llm(filas: list[dict], modelo: str = MODELO, url: str = URL, timeou
         salida.append({"score": p, "valido": p is not None, "latencia_s": time.perf_counter() - t0,
                        "respuesta": texto[:200]})
     return pd.DataFrame(salida)
+
+
+def liberar_llm(modelo: str = MODELO, url: str = URL) -> None:
+    """Pide a Ollama descargar el modelo de memoria ya (por defecto lo retiene minutos)."""
+    r = requests.post(f"{url}/api/generate", json={"model": modelo, "keep_alive": 0}, timeout=60)
+    r.raise_for_status()

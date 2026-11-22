@@ -86,7 +86,7 @@ def construir_pipeline(modelo, escalar: bool) -> Pipeline:
 # 8 GB de RAM: n_jobs y max_samples del bosque, y early_stopping de la red.
 MODELOS_DEFECTO = {
     "lineal": lambda: (LogisticRegression(max_iter=2000), True),
-    "bagging": lambda: (RandomForestClassifier(max_samples=0.3, n_jobs=4, random_state=SEED), False),
+    "bagging": lambda: (RandomForestClassifier(max_samples=0.3, n_jobs=2, random_state=SEED), False),
     "boosting": lambda: (HistGradientBoostingClassifier(random_state=SEED), False),
     "red_neuronal": lambda: (MLPClassifier(early_stopping=True, random_state=SEED), True),
 }

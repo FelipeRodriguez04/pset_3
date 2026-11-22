@@ -65,3 +65,17 @@ def pronosticar_fundacional(obt: pd.DataFrame, fechas_origen, contexto: int = 12
     info = {"modelo_usado": MODELO_ID, "contexto": contexto, "segundos_inferencia": seg,
             "series": len(ctx)}
     return claves, info
+
+
+def liberar_modelo() -> None:
+    """Saca TimesFM de memoria (8 GB de RAM: no debe convivir con el entrenamiento)."""
+    global _MODELO
+    import gc
+    _MODELO = None
+    gc.collect()
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    except ImportError:
+        pass

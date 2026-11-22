@@ -44,3 +44,22 @@ def test_contextos_por_origen_solo_pasado():
     c, f = claves.iloc[0]["cod_canton"], claves.iloc[0]["fecha"]
     serie = obt[(obt.cod_canton == c) & (obt.fecha <= f)].n_emergencias.to_numpy(float)
     np.testing.assert_array_equal(ctx[0], serie[-64:])  # termina en t (incluido), nada de t+1
+
+
+def test_liberar_modelo_fundacional():
+    import src.fundacional as f
+    f._MODELO = object()
+    f.liberar_modelo()
+    assert f._MODELO is None
+
+
+def test_liberar_llm_pide_descargar(monkeypatch):
+    import src.llm as llm
+    llamadas = []
+
+    class R:
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr(llm.requests, "post", lambda url, json, timeout: llamadas.append(json) or R())
+    llm.liberar_llm()
+    assert llamadas[0]["keep_alive"] == 0 and llamadas[0]["model"] == llm.MODELO
