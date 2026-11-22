@@ -1,0 +1,48 @@
+{
+  "3": [
+    {
+      "modelo": "HistGradientBoosting",
+      "familia": "boosting",
+      "pr_auc_cv_mean": 0.1781007258809551,
+      "pr_auc_cv_std": 0.05572576467053835,
+      "run_id": "25a64b7af956411f9b2e29842460af26"
+    },
+    {
+      "modelo": "MLP",
+      "familia": "red_neuronal",
+      "pr_auc_cv_mean": 0.16685156171410792,
+      "pr_auc_cv_std": 0.04718337053261585,
+      "run_id": "359154b2f81b44e79d0ba5dd2a0cc128"
+    },
+    {
+      "modelo": "LogisticRegression",
+      "familia": "lineal",
+      "pr_auc_cv_mean": 0.16236148546515716,
+      "pr_auc_cv_std": 0.03511079950672596,
+      "run_id": "42e1ebbe9eb64f7b9b74187ffbbc0a13"
+    }
+  ],
+  "7": [
+    {
+      "modelo": "HistGradientBoosting",
+      "familia": "boosting",
+      "pr_auc_cv_mean": 0.1778848410658796,
+      "pr_auc_cv_std": 0.05424285866940921,
+      "run_id": "61cd930857ce40ebb9801eb2effbb38d"
+    },
+    {
+      "modelo": "MLP",
+      "familia": "red_neuronal",
+      "pr_auc_cv_mean": 0.16970761452317457,
+      "pr_auc_cv_std": 0.05565386532667148,
+      "run_id": "4e6acf4a7cf7473bb1f817445c79181a"
+    },
+    {
+      "modelo": "LogisticRegression",
+      "familia": "lineal",
+      "pr_auc_cv_mean": 0.16349194694499683,
+      "pr_auc_cv_std": 0.03854299559428002,
+      "run_id": "4eb12fe74eb847e59b3c4e19982f624f"
+    }
+  ]
+}

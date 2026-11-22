@@ -1,0 +1,15 @@
+h,modelo,familia,fase,pr_auc_train,pr_auc_cv_mean,pr_auc_cv_std,brecha,learning_rate,segundos_entrenamiento,supera_ambas_baselines,run_id
+3,TimesFM 2.5 (zero-shot),state_of_the_art,candidato,0.12734,0.1838,0.02981,-0.05646,,0.0,True,7bd9fe0fe10b4e688becad69daf283ba
+3,HistGradientBoosting,boosting,candidato,0.25865,0.1781,0.05573,0.08055,0.1,9.31733,True,25a64b7af956411f9b2e29842460af26
+3,MLP,red_neuronal,candidato,0.19237,0.16685,0.04718,0.02552,0.001,25.4101,True,359154b2f81b44e79d0ba5dd2a0cc128
+3,LogisticRegression,lineal,candidato,0.148,0.16236,0.03511,-0.01436,,4.01811,True,42e1ebbe9eb64f7b9b74187ffbbc0a13
+3,RandomForest,bagging,candidato,0.96811,0.15521,0.04176,0.8129,,25.56894,True,bf04a96fe59a48b18d1d3450d6f2d4ce
+3,Regla de negocio,regla_negocio,baseline,0.10701,0.14944,0.02273,-0.04243,,0.0,False,864495ba99b34fe38722a5d595e4333f
+3,Dummy (prior),dummy,baseline,0.08061,0.07259,0.00879,0.00801,,1.73774,False,33ab10f709f543e285af20378018b471
+7,TimesFM 2.5 (zero-shot),state_of_the_art,candidato,0.12377,0.17965,0.03061,-0.05588,,0.0,True,16411ac0af7d4f989689eec853fccdf3
+7,HistGradientBoosting,boosting,candidato,0.26473,0.17788,0.05424,0.08684,0.1,12.63543,True,61cd930857ce40ebb9801eb2effbb38d
+7,MLP,red_neuronal,candidato,0.18792,0.16971,0.05565,0.01821,0.001,21.64937,True,4e6acf4a7cf7473bb1f817445c79181a
+7,LogisticRegression,lineal,candidato,0.15151,0.16349,0.03854,-0.01198,,3.19121,True,4eb12fe74eb847e59b3c4e19982f624f
+7,RandomForest,bagging,candidato,0.96407,0.15932,0.04588,0.80475,,24.97061,True,162c81bbe45e4073b5309ad970637513
+7,Regla de negocio,regla_negocio,baseline,0.10748,0.1517,0.02275,-0.04422,,0.0,False,cac6d1e2dbcb4d77b3207c88176494a0
+7,Dummy (prior),dummy,baseline,0.0824,0.07373,0.00958,0.00866,,1.64285,False,88409762507948eb9248be7bbcd43974
