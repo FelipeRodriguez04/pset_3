@@ -1,0 +1,7 @@
+h,modelo,alertas,anticipados,no_anticipados,precision,recall,reduccion_fn_vs_negocio
+3,Regla de negocio,1540,588,2617,0.3818,0.1835,0.0
+3,HistGradientBoosting,1540,619,2586,0.4019,0.1931,0.0118
+3,MLP,1540,609,2596,0.3955,0.19,0.008
+7,Regla de negocio,1511,583,2570,0.3858,0.1849,0.0
+7,HistGradientBoosting,1511,615,2538,0.407,0.1951,0.0125
+7,MLP,1511,594,2559,0.3931,0.1884,0.0043

@@ -1,0 +1,17 @@
+h,modelo,estrato,prevalencia,pr_auc_test
+3,HistGradientBoosting,Q1 bajo,0.0853,0.196
+3,HistGradientBoosting,Q2,0.0793,0.2699
+3,HistGradientBoosting,Q3,0.0904,0.3524
+3,HistGradientBoosting,Q4 alto,0.0612,0.2062
+3,MLP,Q1 bajo,0.0853,0.1726
+3,MLP,Q2,0.0793,0.2572
+3,MLP,Q3,0.0904,0.3507
+3,MLP,Q4 alto,0.0612,0.2173
+7,HistGradientBoosting,Q1 bajo,0.0855,0.2018
+7,HistGradientBoosting,Q2,0.0793,0.2528
+7,HistGradientBoosting,Q3,0.0914,0.357
+7,HistGradientBoosting,Q4 alto,0.0619,0.2139
+7,MLP,Q1 bajo,0.0855,0.1793
+7,MLP,Q2,0.0793,0.2361
+7,MLP,Q3,0.0914,0.3647
+7,MLP,Q4 alto,0.0619,0.2138
