@@ -83,14 +83,14 @@ def registrar_corrida(nombre: str, pipe, X: pd.DataFrame, y: pd.Series, cv, *, f
         score_train = final.predict_proba(X)[:, 1]
         t1 = time.perf_counter()
         final.predict_proba(X.iloc[:10000])
-        seg_inf = (time.perf_counter() - t1) / min(len(X), 10000) * 1000
+        seg_por_fila = (time.perf_counter() - t1) / min(len(X), 10000)
 
         metricas = {k: v for k, v in res.items() if not k.startswith("_")}
         metricas.update({
             "train_pr_auc": float(average_precision_score(y, score_train)),
             "brecha_train_cv": float(average_precision_score(y, score_train)) - res["cv_pr_auc_media"],
             "segundos_entrenamiento": seg_train,
-            "ms_inferencia_por_1000": seg_inf * 1000 / 1000,
+            "ms_inferencia_por_1000": seg_por_fila * 1000 * 1000,   # ms para predecir 1000 filas
         })
         for i, s in enumerate(res["_folds"]):
             metricas[f"cv_pr_auc_fold{i}"] = s
@@ -104,9 +104,9 @@ def registrar_corrida(nombre: str, pipe, X: pd.DataFrame, y: pd.Series, cv, *, f
                          "git_commit": commit_git(), **(extra_tags or {})})
         if log_modelo:
             ejemplo = X[FEATURES].head(5)
-            firma = infer_signature(ejemplo, final.predict_proba(ejemplo)[:, 1])
+            firma = infer_signature(ejemplo, final.predict_proba(ejemplo))
             mlflow.sklearn.log_model(final, artifact_path="modelo", signature=firma,
-                                     input_example=ejemplo)
+                                     input_example=ejemplo, pyfunc_predict_fn="predict_proba")
         metricas["run_id"] = run.info.run_id
         metricas["_modelo"] = final
         metricas["_folds"] = res["_folds"]
