@@ -112,3 +112,16 @@ foreach ($n in "01_eda","02_features","03_baseline_candidatos","04_tuning","05_s
   imputación/one-hot/escalado dentro del `Pipeline`, ajustados en cada pliegue.
 
 Los resultados (tablas, figuras, run_id y versión del champion) están en los notebooks, en `docs/` y en el memo.
+
+## Resultados (corrida registrada en `docs/corridas.csv`, 106 corridas)
+
+| | CV PR-AUC (media ± desv) | Test PR-AUC | Picos no anticipados en test |
+|---|---|---|---|
+| **LightGBM ajustado — `ecu911-modelo` v1 `@champion`** | 0.2118 ± 0.0500 | **0.1962** | 3,644 (−14.9% vs regla, umbral de costo 0.159) |
+| MLP ajustado — v2 `@challenger` | 0.2135 ± 0.0626 | 0.1822 | 3,973 (−7.3%) |
+| Regla estacional (PSet 1) | 0.1424 ± 0.0199 | 0.1507 | 4,284 |
+| Dummy (prevalencia) | 0.1055 | 0.1109 | — |
+
+MLP y LightGBM empatan en CV (diferencia 0.0017 < desviación entre pliegues); el desempate se hizo con el costo de
+negocio fuera de pliegue (sólo train), ver `05_seleccion.ipynb` y el memo. `06_reproduccion.ipynb` carga
+`models:/ecu911-modelo@champion` y reproduce las métricas registradas con diferencia 0.
