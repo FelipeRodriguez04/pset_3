@@ -67,11 +67,15 @@ def evaluar_cv(pipe, X, y, cv) -> dict:
 def registrar_corrida(nombre: str, pipe, X: pd.DataFrame, y: pd.Series, cv, *, fase: str,
                       familia: str, meta_datos, extra_params: dict | None = None,
                       extra_tags: dict | None = None, nested: bool = False,
-                      log_modelo: bool = True, cv_resultado: dict | None = None) -> dict:
-    """CV + ajuste final en todo el train + log completo en MLflow. Devuelve métricas."""
+                      log_modelo: bool = True, cv_resultado: dict | None = None,
+                      usar_run_activo: bool = False) -> dict:
+    """CV + ajuste final en todo el train + log completo en MLflow. Devuelve métricas.
+    Con usar_run_activo=True escribe en la corrida ya abierta (p. ej. la corrida padre del tuning)."""
+    from contextlib import nullcontext
     from sklearn.metrics import average_precision_score
 
-    with mlflow.start_run(run_name=nombre, nested=nested) as run:
+    ctx = nullcontext(mlflow.active_run()) if usar_run_activo else mlflow.start_run(run_name=nombre, nested=nested)
+    with ctx as run:
         res = cv_resultado or evaluar_cv(pipe, X, y, cv)
         t0 = time.perf_counter()
         final = clone(pipe).fit(X, y)

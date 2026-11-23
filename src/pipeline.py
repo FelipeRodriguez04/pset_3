@@ -144,3 +144,63 @@ def candidatos() -> dict:
         "xgboost": ("boosting", XGBClassifier(random_state=SEMILLA, n_jobs=-1, eval_metric="aucpr")),
         "mlp": ("red_neuronal", MLPClassifier(random_state=SEMILLA)),
     }
+
+
+# ---------------------------------------------------------------------------
+# Espacios de búsqueda para el tuning (fase "tuning"). Claves con prefijo modelo__.
+# Escalas: tasas de aprendizaje y regularización en escala log (su efecto es
+# multiplicativo y el óptimo puede estar en cualquier orden de magnitud); conteos
+# (árboles, hojas) en escala lineal o log según su rango; fracciones en uniforme.
+# ---------------------------------------------------------------------------
+def espacios() -> dict:
+    from scipy.stats import loguniform, randint, uniform
+
+    return {
+        "lightgbm": {
+            "modelo__learning_rate": loguniform(5e-3, 0.3),
+            "modelo__n_estimators": randint(100, 800),
+            "modelo__num_leaves": randint(8, 128),
+            "modelo__min_child_samples": randint(10, 1000),
+            "modelo__subsample": uniform(0.5, 0.5), "modelo__subsample_freq": [1],
+            "modelo__colsample_bytree": uniform(0.4, 0.6),
+            "modelo__reg_lambda": loguniform(1e-3, 10),
+            "modelo__class_weight": [None, "balanced"],
+        },
+        "hist_gradient_boosting": {
+            "modelo__learning_rate": loguniform(1e-2, 0.3),
+            "modelo__max_iter": randint(100, 600),
+            "modelo__max_leaf_nodes": randint(8, 128),
+            "modelo__min_samples_leaf": randint(20, 1000),
+            "modelo__l2_regularization": loguniform(1e-4, 10),
+            "modelo__max_features": uniform(0.4, 0.6),
+            "modelo__class_weight": [None, "balanced"],
+        },
+        "xgboost": {
+            "modelo__learning_rate": loguniform(1e-2, 0.3),
+            "modelo__n_estimators": randint(100, 800),
+            "modelo__max_depth": randint(3, 10),
+            "modelo__min_child_weight": loguniform(1, 100),
+            "modelo__subsample": uniform(0.5, 0.5),
+            "modelo__colsample_bytree": uniform(0.4, 0.6),
+            "modelo__reg_lambda": loguniform(1e-3, 10),
+            "modelo__scale_pos_weight": [1, 3, 9],
+        },
+        "mlp": {
+            "modelo__hidden_layer_sizes": [(32,), (64,), (128,), (64, 32), (128, 64), (256, 128)],
+            "modelo__alpha": loguniform(1e-6, 1e-1),
+            "modelo__learning_rate_init": loguniform(1e-4, 1e-2),
+            "modelo__batch_size": [256, 512, 1024],
+            "modelo__early_stopping": [True],
+        },
+        "logistic_regression": {
+            "modelo__C": loguniform(1e-4, 1e2),
+            "modelo__class_weight": [None, "balanced"],
+        },
+        "random_forest": {
+            "modelo__n_estimators": randint(100, 400),
+            "modelo__max_depth": [None, 8, 12, 16, 24],
+            "modelo__min_samples_leaf": randint(1, 300),
+            "modelo__max_features": ["sqrt", 0.3, 0.5],
+            "modelo__max_samples": uniform(0.3, 0.5),
+        },
+    }
