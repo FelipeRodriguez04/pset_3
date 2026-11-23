@@ -37,7 +37,7 @@ def prob_exceder(cuantiles: np.ndarray, niveles: np.ndarray, umbral: np.ndarray)
     return out
 
 
-def chronos_scores(obt: pd.DataFrame, filas: pd.DataFrame, h: int, batch: int = 256,
+def chronos_scores(obt: pd.DataFrame, filas: pd.DataFrame, h: int, batch: int = 64,
                    dispositivo: str = "cpu") -> np.ndarray:
     """Puntaje P(pico) para cada fila (cod_canton, fecha=t, umbral_objetivo)."""
     import torch
