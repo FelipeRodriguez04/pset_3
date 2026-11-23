@@ -110,7 +110,7 @@ def metricas_negocio(y, score, umbral, y_regla) -> dict:
     """Métrica de negocio del PSet 1: reducción de picos NO anticipados (FN) frente a
     la regla estacional. Para que sea justa se compara con el MISMO número de alertas
     que emite la regla (si no, alertar todo reduce FN trivialmente). Además se reporta
-    el costo con el umbral de costo mínimo."""
+    el costo y la reducción de FN con el umbral de costo mínimo (que emite más alertas)."""
     y = np.asarray(y)
     base = costo(y, y_regla)
     u_pres = umbral_presupuesto(score, base["alertas"])
@@ -121,6 +121,9 @@ def metricas_negocio(y, score, umbral, y_regla) -> dict:
         "reduccion_fn_pct": 100 * (base["fn"] - pres["fn"]) / max(base["fn"], 1),
         "costo_regla_por_1000": base["costo_por_1000"],
         "costo_modelo_por_1000": opt["costo_por_1000"],
+        "fn_modelo_umbral": opt["fn"],
+        "reduccion_fn_umbral_pct": 100 * (base["fn"] - opt["fn"]) / max(base["fn"], 1),
+        "recall_regla": base["recall"], "precision_regla": base["precision"],
         "recall_umbral": opt["recall"], "precision_umbral": opt["precision"],
         "alertas_umbral": opt["alertas"], "alertas_regla": base["alertas"],
     }
