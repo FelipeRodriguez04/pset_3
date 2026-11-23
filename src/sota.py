@@ -6,7 +6,7 @@ misma validación temporal y la misma métrica que los candidatos tabulares.
    de tiempo. Para cada (cantón, t) recibe la serie diaria hasta t (sin el futuro),
    pronostica los cuantiles de n(t+h) y la probabilidad de pico se estima como
    P(n(t+h) > umbral) interpolando la distribución de cuantiles.
-2) LLM por prompting (Qwen2.5-1.5B-Instruct, local): se describe la historia del
+2) LLM por prompting (Qwen2.5-0.5B-Instruct, local): se describe la historia del
    cantón en texto y se lee la probabilidad del token "Sí" vs "No".
 No hay API key de un LLM comercial en este entorno; los dos modelos son abiertos y
 corren en CPU, de modo que el experimento es reproducible sin credenciales.
@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 CHRONOS_ID = "amazon/chronos-bolt-small"
-LLM_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+LLM_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 CONTEXTO = 512
 
 
